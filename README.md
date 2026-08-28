@@ -15,6 +15,7 @@ The app includes persistent conversations and workspaces, streamed reasoning and
 - Apple Silicon Mac with substantial unified memory
 - macOS 27 and Xcode 27 or newer
 - Git LFS
+- [UV](https://docs.astral.sh/uv/) for installing the Hugging Face CLI
 - About 40 GB of free disk space for the model checkout and packaged app
 
 The bundled assets are an approximately 19 GB Qwen3.8 27B INT4 model and a smaller Qwen3 0.6B INT4 model used to generate conversation titles.
@@ -28,8 +29,11 @@ git clone <repository-url>
 cd qwen-coreai
 git lfs install
 git lfs pull
+uv tool install huggingface-hub
 make download
 ```
+
+`make download` uses the `hf` command installed by `huggingface-hub` to fetch the pinned model revision.
 
 Verify the toolchain, run the tests, and package the app:
 
