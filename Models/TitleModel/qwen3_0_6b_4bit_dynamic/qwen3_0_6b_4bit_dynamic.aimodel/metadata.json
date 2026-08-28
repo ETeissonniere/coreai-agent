@@ -1,0 +1,8 @@
+{
+  "license" : "Apache-2.0",
+  "author" : "Qwen Team",
+  "producer" : "coreai-core 1.0.0b2",
+  "description" : "Qwen3-0.6B is a 0.6B-parameter causal language model from the Qwen3 family. Source: https:\/\/huggingface.co\/Qwen\/Qwen3-0.6B",
+  "assetVersion" : "2.0",
+  "creationDate" : "20260828T010809Z"
+}

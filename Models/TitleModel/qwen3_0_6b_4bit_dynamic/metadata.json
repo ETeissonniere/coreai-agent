@@ -1,0 +1,28 @@
+{
+  "metadata_version": "0.2",
+  "kind": "llm",
+  "name": "title_qwen3_0_6b_4bit_dynamic",
+  "assets": {
+    "main": "qwen3_0_6b_4bit_dynamic.aimodel"
+  },
+  "language": {
+    "tokenizer": "Qwen/Qwen3-0.6B",
+    "vocab_size": 151936,
+    "max_context_length": 1024,
+    "embedded_tokenizer": true,
+    "function_map": {
+      "main": [
+        "main"
+      ]
+    }
+  },
+  "source": {
+    "model_definition": "torch",
+    "hf_model_id": "Qwen/Qwen3-0.6B"
+  },
+  "compression": "4bit",
+  "compilation": {
+    "date": "2026-08-27T18:08:11.981746-07:00",
+    "targets": []
+  }
+}
