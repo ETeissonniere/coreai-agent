@@ -1,0 +1,10 @@
+{
+  "model": "Qwen/Qwen3.8-27B",
+  "sourceRevision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "platform": "macOS",
+  "minimumOS": "27.0",
+  "compression": "4bit",
+  "maxContextLength": 4096,
+  "artifact": "mlboydaisuke/Qwen3.8-27B-CoreAI/gpu-pipelined/qwen3_8_27b_decode_int4lin",
+  "status": "community-coreai-port"
+}
