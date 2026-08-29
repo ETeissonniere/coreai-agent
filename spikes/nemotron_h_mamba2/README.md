@@ -1,16 +1,16 @@
 # Nemotron-H Mamba-2 feasibility spike
 
-This directory is an isolated, synthetic-weight spike for the recurrent
-`NemotronHMamba2Mixer` used by NVIDIA Nemotron 3 Nano 4B. It deliberately does
-not download or package the 4B checkpoint.
+This directory contains the isolated recurrent-layer spike and a clean local
+implementation of NVIDIA Nemotron 3 Nano 4B for empirical Core AI evaluation.
 
 The architecture is pinned to NVIDIA checkpoint revision
 `dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f`, and numerical results are compared
 with Hugging Face Transformers 5.12.1. The checkpoint contains 21 Mamba-2
 mixers, four grouped-query attention layers, and 17 standalone ReLU² MLPs.
-Because this isolated Mamba-2 gate fails, the spike intentionally stops before
-implementing the remaining full-model components, downloading weights, or
-changing the app.
+The full-model work covers all 42 layers, strict checkpoint mapping, the four
+attention KV states, 21 convolution/recurrent Mamba states, tokenizer/chat
+protocols, and a one-token stateful Core AI graph. It remains a spike: the
+runtime performance gate below failed, so the app must not bundle this artifact.
 
 The spike has three implementations of the same layer:
 
@@ -36,6 +36,25 @@ UV_CACHE_DIR=.build/uv-cache uv run --frozen \
 `export_coreai.py` exports and executes small prefill and decode graphs using
 `coreai-torch`. It reports conversion or runtime failures without substituting
 another runtime.
+
+The full exporter expects the pinned Hugging Face checkout at
+`.build/checkpoints/NVIDIA-Nemotron-3-Nano-4B-BF16`. Keep experimental output
+under `.build`; do not write it into `Models/` unless it has passed the runtime
+and quality gates:
+
+```sh
+UV_CACHE_DIR=.build/uv-cache uv run --frozen \
+  --project .build/apple-coreai-models \
+  python spikes/nemotron_h_mamba2/export_full_model.py \
+  --checkpoint .build/checkpoints/NVIDIA-Nemotron-3-Nano-4B-BF16 \
+  --output .build/exports/nemotron \
+  --max-context 4096
+```
+
+Use `--skip-bf16` to reproduce only the INT4 candidate and
+`--mamba-scan-dtype fp16` to reproduce the final all-FP16 SSM experiment. The
+rejected generated assets were deleted after measurement; only the source
+checkpoint remains locally for reproducibility.
 
 ## Findings on this Mac
 
@@ -68,7 +87,9 @@ wins slightly at a reduced hidden size, at the actual Nano mixer dimensions it
 takes 34% more wall time than the statically unrolled recurrence at 8 tokens
 and 53% more at 32 tokens (equivalently, 26-35% lower throughput). Its per-chunk
 quadratic `[S,S,H,D,N]` broadcast also scales poorly.
-The full model was therefore not downloaded, compressed, or integrated.
+The original scan gate failed. A later decode-dominated experiment proceeded
+through the full pinned checkpoint, but its complete runtime gate also failed
+as detailed below.
 
 The existing Qwen canary was also attempted with the correct Xcode beta
 toolchain:
@@ -86,9 +107,68 @@ Qwen throughput number is claimed. This does not affect the failed gate: the
 candidate scan already loses to the naïve recurrence on the same exact-size
 Core AI mixer graph.
 
+## Full-model export and runtime gate
+
+`nemotron_h.py` reauthors the full architecture without shipping Hugging Face,
+MLX, or llama.cpp as runtime dependencies. The strict checkpoint validation saw
+263 expected and 263 loaded tensors with no missing, unexpected, or mismatched
+shapes. Real-weight layer comparisons produced:
+
+- first-token Mamba output versus Transformers: max absolute error `2.45e-4`;
+- Mamba prefill versus recurrent decode: output `1.4e-6`, convolution state
+  `5.25e-6`, recurrent state `2.29e-5` max absolute error;
+- standalone MLP versus Transformers: exact;
+- grouped-query attention versus Transformers eager attention: `4.77e-7` max
+  absolute error.
+
+The exported runtime contract is one `main` function with `input_ids [1,1]`,
+dynamic `position_ids`, FP16 logits, four packed attention KV states, 21 packed
+convolution states, and 21 packed recurrent states. The operational context is
+4096 tokens; prompt ingestion uses the existing runtime's token-wise pipeline.
+
+The first BF16 asset was 7.948 GB. `coreai-opt` 0.2.1 cannot materialize BF16
+constants as NumPy arrays and silently skipped them, so the INT4 experiment
+rebuilds the same graph with FP16 constants before symmetric per-block-32
+compression. That mechanically produces a 2.238 GB asset in 80.7 seconds, but
+does not by itself establish quality parity with the BF16 source.
+
+The initial FP32 recurrent-state asset failed before inference in
+`ANERegionFormationPass` because ANE does not accept FP32 mutable state. Storing
+the recurrent state as FP16 while retaining FP32 recurrence arithmetic produced
+valid logits, but ANE compilation still failed and execution fell back:
+
+| Metric | Boundary-FP16 candidate |
+|---|---:|
+| Load | 0.915 s |
+| First inference / TTFT | 1.906 s |
+| Warm decode | 0.829 tok/s |
+| Logits | finite `[1,1,131072]`, argmax 1149 |
+
+Real-weight recurrence drift from the FP16 state boundary was 0.53% mean
+relative mixer-output error at 128 tokens and 0.98% at 512 tokens. Moving all
+SSM arithmetic to FP16 increased that to 1.08% and 2.51%, respectively. Two
+bounded attempts to export the all-FP16 full graph were terminated by macOS
+memory pressure during `export_to_coreai`, before an asset was written.
+
+The only runnable full artifact falls below one token per second and cannot
+honestly serve as a **Fast** model. No controlled Qwen comparison is claimed
+because the bounded fresh Qwen canary above did not finish loading. The
+candidate was not promoted into the app bundle. The exact native blocker is ANE
+compilation of FP32 regions around the SSM graph; the lower-precision alternative
+compounds numerical drift and could not be exported on this host under the
+available memory envelope.
+
 ## Numerical validation
 
-All five tests pass: closed-form recurrence, dense/chunked equivalence, state
-continuity into decode, PyTorch export, and Hugging Face prefill/recurrent-decode
-equivalence. Core AI outputs and returned convolution/SSM state are also checked
-against PyTorch after every benchmark export at `atol=rtol=2e-3`.
+All 13 focused tests pass. They cover the isolated recurrence, dense/chunked
+equivalence, state continuity into decode, PyTorch export, Hugging Face mixer
+parity, synthetic full-checkpoint mapping, hybrid layer ordering, attention KV
+continuity, pinned-input rejection, and tokenizer/chat/reasoning/tool protocol
+fixtures. Core AI outputs and returned convolution/SSM state are also checked
+against PyTorch after each isolated benchmark export at `atol=rtol=2e-3`.
+
+The real-weight full-model mapping, MLP/GQA comparisons, INT4 size, runtime, and
+drift figures above are recorded spike measurements rather than claims that the
+entire 4B export is exercised by the checked-in test suite. The speed gate failed
+before a full INT4-versus-BF16 quality evaluation or save/reload acceptance run;
+those remain mandatory before any future promotion.

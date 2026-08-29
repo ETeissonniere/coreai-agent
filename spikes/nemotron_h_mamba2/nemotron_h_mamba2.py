@@ -69,7 +69,7 @@ def sequential_scan(
     initial_state: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Reference recurrence: state_t = a_t state_(t-1) + b_t x_t."""
-    state = initial_state.float()
+    state = initial_state.to(x.dtype)
     outputs: list[torch.Tensor] = []
     for token in range(x.shape[1]):
         state = torch.exp(log_a[:, token, :, None, None]) * state + (
@@ -136,9 +136,12 @@ def chunked_parallel_scan(
 class NemotronHMamba2Mixer(nn.Module):
     """Small, weight-compatible reauthoring of HF's Nemotron-H Mamba-2 mixer."""
 
-    def __init__(self, config: Mamba2Config) -> None:
+    def __init__(
+        self, config: Mamba2Config, *, scan_dtype: torch.dtype = torch.float32
+    ) -> None:
         super().__init__()
         self.config = config
+        self.scan_dtype = scan_dtype
         self.in_proj = nn.Linear(
             config.hidden_size,
             config.intermediate_size + config.conv_dim + config.num_heads,
@@ -188,21 +191,27 @@ class NemotronHMamba2Mixer(nn.Module):
             ],
             dim=-1,
         )
-        x = x.reshape(x.shape[0], x.shape[1], cfg.num_heads, cfg.head_dim).float()
-        b = b.reshape(b.shape[0], b.shape[1], cfg.num_groups, cfg.state_size).float()
-        c = c.reshape(c.shape[0], c.shape[1], cfg.num_groups, cfg.state_size).float()
+        x = x.reshape(x.shape[0], x.shape[1], cfg.num_heads, cfg.head_dim).to(
+            self.scan_dtype
+        )
+        b = b.reshape(b.shape[0], b.shape[1], cfg.num_groups, cfg.state_size).to(
+            self.scan_dtype
+        )
+        c = c.reshape(c.shape[0], c.shape[1], cfg.num_groups, cfg.state_size).to(
+            self.scan_dtype
+        )
         b = _expand_groups(b, cfg.num_heads)
         c = _expand_groups(c, cfg.num_heads)
         dt = F.softplus(dt + self.dt_bias).clamp(
             min=cfg.time_step_min, max=cfg.time_step_max
-        ).float()
+        ).to(self.scan_dtype)
         b = b * dt[..., None]
-        log_a = dt * -torch.exp(self.A_log.float())[None, None, :]
+        log_a = dt * -torch.exp(self.A_log.to(self.scan_dtype))[None, None, :]
         return x, log_a, b, c
 
     def _gated_group_norm(self, hidden: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
         cfg = self.config
-        hidden = hidden.float() * F.silu(gate.float())
+        hidden = hidden.to(self.scan_dtype) * F.silu(gate.to(self.scan_dtype))
         grouped = hidden.reshape(
             *hidden.shape[:-1], cfg.num_groups, cfg.intermediate_size // cfg.num_groups
         )

@@ -1,8 +1,28 @@
 # Nemotron model provenance and redistribution
 
-This document is the release gate for any bundled Core AI conversion of
+This document records the feasibility-spike provenance and the release gate
+that would apply to a future Core AI conversion of
 `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16`. It is an engineering compliance
 checklist, not legal advice.
+
+## Feasibility status
+
+**Nemotron is not bundled in the app.** The isolated Core AI Mamba-2 spike
+compiled and executed correctly, but the chunked/parallel prefill candidate
+failed the performance gate at the model's actual mixer dimensions: it was 34%
+slower than the sequential recurrence at eight tokens and 53% slower at 32
+tokens. Because the app's workload is decode dominated, the investigation then
+continued through a clean full-model implementation and a 2.238 GB INT4 export.
+That artifact produced finite logits, but Core AI could not compile its FP32 SSM
+regions for ANE and fell back to 0.829 tok/s. An all-FP16 SSM alternative showed
+2.51% mean mixer-output drift by 512 tokens, and two bounded full exports were
+terminated by memory pressure before producing an asset. None of these artifacts
+was integrated or added to packaging. The application continues to bundle only
+its existing Qwen models.
+
+The obligations and checklist below are retained for a future implementation.
+They are not a claim that this repository currently redistributes Nemotron
+weights.
 
 ## Pinned artifact provenance
 
@@ -15,7 +35,7 @@ conversion, record the following in the conversion manifest and release notes:
 - filenames and SHA-256 digests for the BF16 weights, configuration, tokenizer,
   chat template, and any parser inputs;
 - exporter version/commit, Core AI and Xcode versions, quantization recipe, and
-  SHA-256 digest of the resulting `.aiengine`;
+  SHA-256 digest of the resulting `.aimodel` bundle;
 - the license text and repository file listing captured at that same revision.
 
 At the feasibility-spike revision, `model.safetensors` is 7,947,142,640 bytes
@@ -28,6 +48,13 @@ The model card currently says the model is ready for commercial use and that
 its governing terms are the [NVIDIA Nemotron Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/).
 The repository metadata label is not a substitute for retaining the governing
 license text from the pinned revision.
+
+At pinned revision `dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f`, the
+repository's `LICENSE` object is present but empty (0 bytes), and the repository
+does not contain a `NOTICE` file. The distributable license resource therefore
+comes from the model card's primary governing-terms link to NVIDIA, version
+December 15, 2025. These observations must be rechecked if the pinned revision
+changes.
 
 ## Redistribution obligations
 
@@ -51,9 +78,9 @@ and redistribution in source or object form, subject to these conditions:
    warranty offered by this project must be solely on the distributor's behalf,
    not NVIDIA's.
 
-The current [upstream file tree](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16/tree/main)
-does not show a `NOTICE` file, but that observation does not replace the
-required check of the immutable revision used for a release.
+The [pinned upstream file tree](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16/tree/dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f)
+is evidence for the feasibility spike. A future release must repeat the check
+against its own immutable revision rather than relying on this result.
 
 ## Tokenizer, template, and code boundary
 
@@ -83,7 +110,11 @@ obligation to audit any data or code actually copied.
   claims concerning the Work or its outputs. Escalate relevant disputes to
   counsel.
 
-## Release checklist
+## Future release checklist
+
+This checklist is intentionally incomplete. It becomes applicable only if a
+future feasibility and performance gate passes and the project proposes to
+redistribute converted Nemotron weights.
 
 - [ ] Immutable Hugging Face revision and all input/output hashes recorded.
 - [ ] Conversion recipe, exporter commit, Core AI version, and Xcode version recorded.
@@ -96,6 +127,6 @@ obligation to audit any data or code actually copied.
 - [ ] Export-control and sanctions review completed for enabled territories.
 - [ ] License, notices, manifest, checksums, and acknowledgment evidence archived with the release.
 
-Primary sources: the [model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16/blob/main/README.md),
-[repository files](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16/tree/main),
+Primary sources: the [pinned model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16/blob/dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f/README.md),
+[pinned repository files](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16/tree/dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f),
 and [NVIDIA Nemotron Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/).
