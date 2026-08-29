@@ -8,3 +8,5 @@ Models/Qwen3.8-27B-CoreAI/
 Models/**/.cache/
 *.xcuserstate
 .DS_Store
+__pycache__/
+*.py[cod]
