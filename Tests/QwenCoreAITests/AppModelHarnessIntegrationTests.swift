@@ -3,6 +3,55 @@ import QwenAgentRuntime
 import Testing
 @testable import QwenCoreAI
 
+@MainActor @Test func titleGenerationReplacesImmediateFallbackOnSuccess() async throws {
+    let root = temporaryHarnessDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let conversation = Conversation()
+    let appStore = JSONAppStateStore(fileURL: root.appending(path: "AppState.json"))
+    try appStore.save(PersistedAppState(
+        conversations: [conversation], folders: [], openConversationIDs: [conversation.id],
+        selectedConversationID: conversation.id
+    ))
+    let model = AppModel(
+        modelService: HarnessModelServiceStub(), appStateStore: appStore,
+        harnessStore: JSONHarnessStore(rootURL: root.appending(path: "Harness")),
+        titleService: TitleGeneratorStub(result: .generated("Core AI Research"))
+    )
+    await model.waitForHarnessBootstrap()
+    model.modelPhase = .ready
+    model.draft = "Research the latest Core AI APIs"
+    model.send()
+
+    try await waitUntil { model.conversations[0].title == "Core AI Research" }
+    #expect(model.titleGenerationFailuresByConversation[conversation.id] == nil)
+}
+
+@MainActor @Test func titleGenerationFailureKeepsImmediateFallbackAndReportsDiagnostic() async throws {
+    let root = temporaryHarnessDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let conversation = Conversation()
+    let appStore = JSONAppStateStore(fileURL: root.appending(path: "AppState.json"))
+    try appStore.save(PersistedAppState(
+        conversations: [conversation], folders: [], openConversationIDs: [conversation.id],
+        selectedConversationID: conversation.id
+    ))
+    let model = AppModel(
+        modelService: HarnessModelServiceStub(), appStateStore: appStore,
+        harnessStore: JSONHarnessStore(rootURL: root.appending(path: "Harness")),
+        titleService: TitleGeneratorStub(result: .fallback(.assetMissing))
+    )
+    await model.waitForHarnessBootstrap()
+    model.modelPhase = .ready
+    let prompt = "Research the latest Core AI APIs and explain the agent runtime"
+    model.draft = prompt
+    model.send()
+
+    let fallbackTitle = String(prompt.prefix(48))
+    #expect(model.conversations[0].title == fallbackTitle)
+    try await waitUntil { model.titleGenerationFailuresByConversation[conversation.id] == .assetMissing }
+    #expect(model.conversations[0].title == fallbackTitle)
+}
+
 @MainActor @Test func failedTaskRetryRestoresRequestToComposerAndDismissesRecoveryNotice() async throws {
     let root = temporaryHarnessDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -76,6 +125,14 @@ import Testing
     #expect(checkpoint.compaction?.generation == 2)
     #expect(checkpoint.compaction?.conversationMemory == "authoritative second memory")
     #expect(model.toolActivitiesByConversation[conversation.id]?.first?.state == .succeeded)
+    let assistantMessageID = try #require(model.conversations[0].messages.last?.id)
+    let trace = try #require(model.executionTraceByMessage[assistantMessageID])
+    let toolID = try #require(model.toolActivitiesByConversation[conversation.id]?.first?.id)
+    #expect(trace.entries.map(\.content) == [
+        .reasoning("I should search for a primary source."),
+        .tool(toolID),
+        .reasoning("I checked the primary source."),
+    ])
     #expect(model.runStatusByConversation[conversation.id] == .completed)
     let rawEventLog = try String(
         contentsOf: harnessURL.appending(path: "events/\(run.id).jsonl"),
@@ -89,6 +146,47 @@ import Testing
     #expect(!rawEventLog.contains("I checked the primary source."))
     #expect(!rawCheckpoints.contains("I checked the primary source."))
     #expect(!checkpoint.transcript.contains { $0.kind == .reasoning })
+}
+
+@MainActor @Test func retryAttemptReconcilesPendingToolAndScopesReusedExternalID() async throws {
+    let root = temporaryHarnessDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let conversation = Conversation(title: "Retry boundary")
+    let appStore = JSONAppStateStore(fileURL: root.appending(path: "AppState.json"))
+    try appStore.save(PersistedAppState(
+        conversations: [conversation], folders: [], openConversationIDs: [conversation.id],
+        selectedConversationID: conversation.id
+    ))
+    let harnessStore = JSONHarnessStore(rootURL: root.appending(path: "Harness"))
+    let model = AppModel(
+        modelService: AttemptBoundaryModelServiceStub(), appStateStore: appStore,
+        harnessStore: harnessStore
+    )
+    await model.waitForHarnessBootstrap()
+    model.modelPhase = .ready
+    model.draft = "Search twice"
+    model.send()
+
+    try await waitUntil { model.modelPhase == .ready && model.conversations[0].messages.count == 2 }
+    let activities = try #require(model.toolActivitiesByConversation[conversation.id])
+    #expect(activities.count == 2)
+    #expect(activities[0].id != activities[1].id)
+    #expect(activities[0].state == .failed)
+    #expect(activities[1].state == .succeeded)
+    #expect(activities[0].result?.content.contains("attempt ended") == true)
+
+    let responseID = try #require(model.conversations[0].messages.last?.id)
+    let trace = try #require(model.executionTraceByMessage[responseID])
+    #expect(trace.entries.compactMap { entry -> UUID? in
+        guard case .tool(let id) = entry.content else { return nil }
+        return id
+    } == activities.map(\.id))
+    let run = try #require(try await harnessStore.loadIndex().runs.max { $0.updatedAt < $1.updatedAt })
+    let events = try await harnessStore.events(for: run.id)
+    #expect(events.contains { event in
+        guard case .toolCompleted(let result) = event.payload else { return false }
+        return result.invocationID == activities[0].id && result.isError
+    })
 }
 
 @MainActor @Test func appModelRestoresSkillsApprovalsArtifactsAndStableRunState() async throws {
@@ -226,14 +324,16 @@ import Testing
     let runID = try #require(harnessIndex.runs.last?.id)
     let projection = try await harness.projection(for: runID)
     let durableApproval = try #require(projection.approvals.first)
-    let targetInvocationID = ToolIdentity.uuid(forOpaqueID: "foundation-call-17")
-    let distractorInvocationID = ToolIdentity.uuid(forOpaqueID: "foundation-call-18")
+    let targetInvocation = try #require(projection.pendingInvocations.first {
+        $0.argumentsJSON.contains("Core AI")
+    })
+    let distractorInvocation = try #require(projection.pendingInvocations.first {
+        $0.argumentsJSON.contains("Swift")
+    })
 
     #expect(durableApproval.id == approval.id)
-    #expect(durableApproval.invocationID == targetInvocationID)
-    #expect(durableApproval.invocationID != distractorInvocationID)
-    #expect(projection.pendingInvocations.map(\.id).contains(targetInvocationID))
-    #expect(projection.pendingInvocations.map(\.id).contains(distractorInvocationID))
+    #expect(durableApproval.invocationID == targetInvocation.id)
+    #expect(durableApproval.invocationID != distractorInvocation.id)
     #expect(await service.resolvedApprovalID == nil)
 
     model.decideApproval(approval.id, in: conversation.id, decision: .allowedOnce)
@@ -322,6 +422,18 @@ private final class HarnessModelServiceStub: ModelServing, @unchecked Sendable {
                 compactionCount: 2, modelLimit: 4_096, outputReserve: 768,
                 conversationMemory: "stale context memory"
             )))
+            continuation.yield(.agent(.reasoning("I should search for a primary source.")))
+            continuation.yield(.content(GenerationUpdate(
+                text: "",
+                reasoning: "I should search for a primary source.",
+                metrics: GenerationMetrics(
+                    promptTokens: 10, cachedTokens: 0, generatedTokens: 1, reasoningTokens: 1,
+                    timeToFirstToken: .milliseconds(5), elapsed: .milliseconds(10)
+                ),
+                kvCache: KVCacheSnapshot(
+                    usedTokens: 11, allocatedTokens: 32, maximumTokens: 4_096, reusedPrefixTokens: 0
+                )
+            )))
             continuation.yield(.agent(.toolCall(
                 id: "call-1",
                 name: "web.search",
@@ -332,9 +444,10 @@ private final class HarnessModelServiceStub: ModelServing, @unchecked Sendable {
                 name: "web.search",
                 content: "https://developer.apple.com/documentation/foundationmodels"
             )))
+            continuation.yield(.agent(.reasoning("I checked the primary source.")))
             continuation.yield(.content(GenerationUpdate(
                 text: "Finished.",
-                reasoning: "I checked the primary source.",
+                reasoning: "I should search for a primary source.\n\nI checked the primary source.",
                 metrics: GenerationMetrics(
                     promptTokens: 10,
                     cachedTokens: 0,
@@ -364,6 +477,63 @@ private final class HarnessModelServiceStub: ModelServing, @unchecked Sendable {
 
     func cancel() async {}
     func resolveApproval(id: UUID, approved: Bool) async -> Bool { true }
+}
+
+private final class AttemptBoundaryModelServiceStub: ModelServing, @unchecked Sendable {
+    func load(resourcesAt url: URL) async throws {}
+
+    func generate(conversationID: UUID, prompt: String) -> AsyncThrowingStream<GenerationEvent, Error> {
+        generate(conversationID: conversationID, prompt: prompt, enabledSkillIDs: [])
+    }
+
+    func generate(
+        conversationID: UUID,
+        prompt: String,
+        enabledSkillIDs: Set<String>
+    ) -> AsyncThrowingStream<GenerationEvent, Error> {
+        generate(request: ModelGenerationRequest(
+            conversationID: conversationID, prompt: prompt, enabledSkillIDs: enabledSkillIDs,
+            history: [], compaction: nil
+        ))
+    }
+
+    func generate(request: ModelGenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.attemptStarted(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!))
+            continuation.yield(.agent(.toolCall(
+                id: "reused-call", name: "searchWeb", argumentsJSON: #"{"query":"first"}"#
+            )))
+            continuation.yield(.attemptStarted(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!))
+            continuation.yield(.agent(.toolCall(
+                id: "reused-call", name: "searchWeb", argumentsJSON: #"{"query":"retry"}"#
+            )))
+            continuation.yield(.agent(.toolOutput(
+                id: "reused-call", name: "searchWeb", content: "Retry result"
+            )))
+            continuation.yield(.content(GenerationUpdate(
+                text: "Finished.", reasoning: nil,
+                metrics: GenerationMetrics(
+                    promptTokens: 4, cachedTokens: 0, generatedTokens: 1, reasoningTokens: 0,
+                    timeToFirstToken: .milliseconds(1), elapsed: .milliseconds(2)
+                ),
+                kvCache: KVCacheSnapshot(
+                    usedTokens: 5, allocatedTokens: 32, maximumTokens: 4_096, reusedPrefixTokens: 0
+                )
+            )))
+            continuation.finish()
+        }
+    }
+
+    func cancel() async {}
+    func resolveApproval(id: UUID, approved: Bool) async -> Bool { false }
+}
+
+private struct TitleGeneratorStub: TitleGenerating {
+    let result: TitleGenerationResult
+
+    func generateTitle(for firstMessage: String) async -> TitleGenerationResult {
+        result
+    }
 }
 
 private actor ApprovalBrokerModelServiceStub: ModelServing {
@@ -397,6 +567,9 @@ private actor ApprovalBrokerModelServiceStub: ModelServing {
 
     private func begin(_ continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation) {
         self.continuation = continuation
+        continuation.yield(.attemptStarted(
+            UUID(uuidString: "00000000-0000-0000-0000-000000000017")!
+        ))
         continuation.yield(.agent(.toolCall(
             id: "foundation-call-17", name: "searchWeb", argumentsJSON: #"{"query":"Core AI"}"#
         )))

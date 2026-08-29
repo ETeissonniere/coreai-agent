@@ -125,6 +125,70 @@ struct ToolActivityPresentation: Identifiable, Sendable {
     }
 }
 
+/// Ephemeral, display-only chronology for one assistant turn. Tool payloads and
+/// private reasoning intentionally remain outside `ChatMessage` and canonical model history.
+struct AssistantExecutionTrace: Equatable, Sendable {
+    struct Entry: Identifiable, Equatable, Sendable {
+        enum Content: Equatable, Sendable {
+            case reasoning(String)
+            case tool(UUID)
+        }
+
+        let id: UUID
+        var content: Content
+
+        init(id: UUID = UUID(), content: Content) {
+            self.id = id
+            self.content = content
+        }
+    }
+
+    private(set) var entries: [Entry] = []
+
+    mutating func recordTool(_ invocationID: UUID) {
+        guard !entries.contains(where: { $0.content == .tool(invocationID) }) else { return }
+        entries.append(Entry(content: .tool(invocationID)))
+    }
+
+    mutating func recordReasoningSegment(_ text: String) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if let lastIndex = entries.indices.last,
+           case .reasoning(let existing) = entries[lastIndex].content {
+            if text == existing || existing.hasSuffix(text) { return }
+            if text.hasPrefix(existing) {
+                entries[lastIndex].content = .reasoning(text)
+            } else {
+                entries[lastIndex].content = .reasoning(existing + "\n\n" + text)
+            }
+        } else {
+            entries.append(Entry(content: .reasoning(text)))
+        }
+    }
+
+    /// Reconciles the aggregate reasoning snapshot emitted by generation with
+    /// segments already frozen around tool boundaries.
+    mutating func recordReasoningSnapshot(_ text: String) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let recorded = reasoningText
+        guard text != recorded else { return }
+        guard !recorded.isEmpty, text.hasPrefix(recorded) else {
+            if recorded.isEmpty { recordReasoningSegment(text) }
+            return
+        }
+        let suffix = text.dropFirst(recorded.count).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !suffix.isEmpty { recordReasoningSegment(suffix) }
+    }
+
+    var reasoningText: String {
+        entries.compactMap {
+            guard case .reasoning(let text) = $0.content else { return nil }
+            return text
+        }.joined(separator: "\n\n")
+    }
+}
+
 extension AgentSkillMetadata {
     var systemImage: String {
         let value = name.lowercased()

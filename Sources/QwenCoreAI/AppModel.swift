@@ -26,18 +26,20 @@ final class AppModel {
     var artifactsByConversation = [UUID: [TaskArtifact]]()
     var approvalsByConversation = [UUID: [TaskApprovalRequest]]()
     var toolActivitiesByConversation = [UUID: [ToolActivityPresentation]]()
+    var executionTraceByMessage = [UUID: AssistantExecutionTrace]()
     var runStatusByConversation = [UUID: AgentRunStatus]()
     var recoveryCheckpointByConversation = [UUID: AgentRunCheckpoint]()
     var recoveredConversationIDs = Set<UUID>()
     var persistenceRecoveryNotice: String?
     var draftAttachmentsByConversation = [UUID: [ComposerAttachment]]()
     var attachmentNotice: String?
+    var titleGenerationFailuresByConversation = [UUID: TitleGenerationFailure]()
     private var attachmentIngestionConversationIDs = Set<UUID>()
 
     private let modelService: any ModelServing
     private let appStateStore: any AppStateStoring
     private let harnessStore: any HarnessStoring
-    private let titleService: TitleModelService
+    private let titleService: any TitleGenerating
     private var persistenceTask: Task<Void, Never>?
     private var generationTask: Task<Void, Never>?
     private var generatingConversationID: UUID?
@@ -53,7 +55,8 @@ final class AppModel {
     init(
         modelService: any ModelServing = CoreAIModelService(),
         appStateStore: any AppStateStoring = JSONAppStateStore(),
-        harnessStore: any HarnessStoring = JSONHarnessStore.shared
+        harnessStore: any HarnessStoring = JSONHarnessStore.shared,
+        titleService: (any TitleGenerating)? = nil
     ) {
         self.modelService = modelService
         self.appStateStore = appStateStore
@@ -65,7 +68,7 @@ final class AppModel {
             Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
                 .appending(path: titlePath).standardizedFileURL,
         ].compactMap { $0 }
-        self.titleService = TitleModelService(resourcesURL: titleCandidates.first(where: {
+        self.titleService = titleService ?? TitleModelService(resourcesURL: titleCandidates.first(where: {
             FileManager.default.fileExists(atPath: $0.appending(path: "metadata.json").path)
         }))
         let restoredState: PersistedAppState?
@@ -343,6 +346,7 @@ final class AppModel {
         if generatingConversationID == id { stop() }
         let taskID = taskIDByConversation[id]
         let removedTabIndex = openConversationIDs.firstIndex(of: id)
+        let removedMessageIDs = conversations.first(where: { $0.id == id })?.messages.map(\.id) ?? []
 
         conversations.removeAll { $0.id == id }
         openConversationIDs.removeAll { $0 == id }
@@ -355,6 +359,9 @@ final class AppModel {
         artifactsByConversation[id] = nil
         approvalsByConversation[id] = nil
         toolActivitiesByConversation[id] = nil
+        for messageID in removedMessageIDs {
+            executionTraceByMessage[messageID] = nil
+        }
         runStatusByConversation[id] = nil
         recoveryCheckpointByConversation[id] = nil
         recoveredConversationIDs.remove(id)
@@ -540,6 +547,8 @@ final class AppModel {
                 var latestResponse = ""
                 var wasCompacting = false
                 var invocationsByExternalID = [String: ToolInvocation]()
+                var generationAttemptID = responseID
+                var hasStartedGenerationAttempt = false
                 let request = ModelGenerationRequest(
                     conversationID: conversationID,
                     prompt: modelPrompt,
@@ -557,6 +566,31 @@ final class AppModel {
                 for try await event in modelService.generate(request: request) {
                     guard !Task.isCancelled else { break }
                     switch event {
+                    case .attemptStarted(let attemptID):
+                        if hasStartedGenerationAttempt {
+                            let abandoned = (toolActivitiesByConversation[conversationID] ?? []).filter {
+                                $0.state == .running || $0.state == .waitingForApproval
+                            }
+                            failActiveToolActivities(
+                                in: conversationID,
+                                message: "The generation attempt ended before this tool completed."
+                            )
+                            for activity in abandoned {
+                                _ = try await harnessStore.append(
+                                    .toolCompleted(ToolResultRecord(
+                                        invocationID: activity.id,
+                                        content: "The generation attempt ended before this tool completed.",
+                                        isError: true
+                                    )),
+                                    to: run.id,
+                                    idempotencyKey: "tool-abandoned:\(activity.invocation.idempotencyKey)",
+                                    timestamp: .now
+                                )
+                            }
+                            invocationsByExternalID.removeAll()
+                        }
+                        generationAttemptID = attemptID
+                        hasStartedGenerationAttempt = true
                     case .context(let context):
                         contextByConversation[conversationID] = context
                         updateMessage(responseID, in: conversationID) { $0.contextSnapshot = context }
@@ -588,20 +622,32 @@ final class AppModel {
                             $0.metrics = update.metrics
                             $0.kvCacheSnapshot = update.kvCache
                         }
+                        if let reasoning = update.reasoning {
+                            executionTraceByMessage[responseID, default: AssistantExecutionTrace()]
+                                .recordReasoningSnapshot(reasoning)
+                        }
                         // Give AppKit a rendering opportunity between streamed
                         // snapshots instead of visually coalescing a whole turn.
                         await Task.yield()
                     case .agent(let lifecycle):
                         switch lifecycle {
+                        case .reasoning(let reasoning):
+                            executionTraceByMessage[responseID, default: AssistantExecutionTrace()]
+                                .recordReasoningSegment(reasoning)
                         case .toolCall(let externalID, let name, let argumentsJSON):
                             let invocation = ToolInvocation(
-                                id: ToolIdentity.uuid(forOpaqueID: externalID),
+                                id: ToolIdentity.uuid(
+                                    forOpaqueID: externalID,
+                                    scope: generationAttemptID.uuidString
+                                ),
                                 toolID: name,
                                 argumentsJSON: argumentsJSON,
-                                idempotencyKey: "tool:\(run.id):\(externalID)",
+                                idempotencyKey: "tool:\(run.id):\(generationAttemptID):\(externalID)",
                                 sideEffect: Self.sideEffect(forToolNamed: name)
                             )
                             invocationsByExternalID[externalID] = invocation
+                            executionTraceByMessage[responseID, default: AssistantExecutionTrace()]
+                                .recordTool(invocation.id)
                             _ = try await harnessStore.append(
                                 .toolRequested(invocation),
                                 to: run.id,
@@ -708,7 +754,7 @@ final class AppModel {
                             try await saveHarnessCheckpoint(for: conversationID, run: run)
                         case .approvalResolved:
                             break
-                        case .reasoning, .response:
+                        case .response:
                             break
                         }
                     case .compaction(let snapshot):
@@ -765,13 +811,19 @@ final class AppModel {
                 // Persist final runtime telemetry with the assistant turn so
                 // context/KV history survives a normal relaunch.
                 schedulePersistence()
-                if shouldGenerateTitle,
-                   let generatedTitle = await titleService.generateTitle(for: prompt),
-                   let conversationIndex = conversations.firstIndex(where: { $0.id == conversationID }) {
-                    conversations[conversationIndex].title = generatedTitle
-                    conversations[conversationIndex].updatedAt = .now
-                    schedulePersistence()
-                    await persistTaskTitle(for: conversationID, title: generatedTitle)
+                if shouldGenerateTitle {
+                    switch await titleService.generateTitle(for: prompt) {
+                    case .generated(let generatedTitle):
+                        titleGenerationFailuresByConversation[conversationID] = nil
+                        if let conversationIndex = conversations.firstIndex(where: { $0.id == conversationID }) {
+                            conversations[conversationIndex].title = generatedTitle
+                            conversations[conversationIndex].updatedAt = .now
+                            schedulePersistence()
+                            await persistTaskTitle(for: conversationID, title: generatedTitle)
+                        }
+                    case .fallback(let failure):
+                        titleGenerationFailuresByConversation[conversationID] = failure
+                    }
                 }
             } catch {
                 let failedAt = Date.now

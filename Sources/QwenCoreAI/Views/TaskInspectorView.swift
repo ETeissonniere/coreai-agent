@@ -188,6 +188,14 @@ struct TaskInspectorView: View {
                         LabeledContent("Updated", value: conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
                     }
                 }
+                if let conversationID = model.selectedConversationID,
+                   let failure = model.titleGenerationFailuresByConversation[conversationID] {
+                    InspectorGroup("Conversation title") {
+                        Label(failure.userMessage, systemImage: "exclamationmark.circle")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                    }
+                }
                 InspectorGroup("Permissions") {
                     let approvals = model.selectedConversationID.flatMap { model.approvalsByConversation[$0] } ?? []
                     if approvals.isEmpty { Text("No permission requests in this task.").foregroundStyle(.secondary) }

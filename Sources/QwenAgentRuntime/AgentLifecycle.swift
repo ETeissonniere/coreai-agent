@@ -33,9 +33,14 @@ public struct AgentApprovalRequest: Sendable, Equatable {
 
 public enum ToolIdentity {
     public static func uuid(forOpaqueID value: String) -> UUID {
+        uuid(forOpaqueID: value, scope: "")
+    }
+
+    public static func uuid(forOpaqueID value: String, scope: String) -> UUID {
         var first = UInt64(0xcbf29ce484222325)
         var second = UInt64(0x84222325cbf29ce4)
-        for byte in value.utf8 {
+        let scopedValue = scope.isEmpty ? value : scope + "\u{1f}" + value
+        for byte in scopedValue.utf8 {
             first = (first ^ UInt64(byte)) &* 0x100000001b3
             second = (second ^ UInt64(byte &+ 31)) &* 0x100000001b3
         }

@@ -3,6 +3,9 @@ import SwiftUI
 struct TaskTimelineView: View {
     @Bindable var model: AppModel
     let conversation: Conversation
+    @State private var scrollState = ConversationScrollState()
+
+    private let bottomAnchorID = "conversation-bottom"
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -24,6 +27,7 @@ struct TaskTimelineView: View {
                             MessageRow(
                                 message: message,
                                 toolActivities: toolActivities(for: message),
+                                executionTrace: model.executionTraceByMessage[message.id],
                                 activePhase: message.id == conversation.messages.last?.id
                                     && message.generationState == .streaming
                                     ? model.modelPhase
@@ -50,15 +54,62 @@ struct TaskTimelineView: View {
                             model.showInspector = true
                         }
                     }
+                    Color.clear.frame(height: 1).id(bottomAnchorID)
                 }
                 .frame(maxWidth: 820)
                 .padding(.horizontal, 28).padding(.vertical, 24)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
-            .onChange(of: conversation.messages.last?.text) {
-                if let id = conversation.messages.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+            .onScrollGeometryChange(for: ConversationScrollMetrics.self) { geometry in
+                ConversationScrollMetrics(
+                    offset: geometry.contentOffset.y,
+                    distanceFromBottom: max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
+                )
+            } action: { _, metrics in
+                scrollState.observe(metrics)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !scrollState.isFollowingLatest {
+                    Button {
+                        scrollState.resumeFollowing()
+                        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                    } label: {
+                        Label("Jump to latest", systemImage: "arrow.down")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .padding(18)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .accessibilityHint("Resumes following new response tokens")
+                }
+            }
+            .animation(.snappy(duration: 0.2), value: scrollState.isFollowingLatest)
+            .task(id: conversation.id) {
+                await Task.yield()
+                scrollState.resumeFollowing()
+                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+            }
+            .onChange(of: conversation.messages.last?.id) {
+                scrollState.resumeFollowing()
+                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+            }
+            .onChange(of: streamingRevision) {
+                guard scrollState.isFollowingLatest else { return }
+                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
             }
         }
+    }
+
+    private var streamingRevision: StreamingRevision? {
+        guard let message = conversation.messages.last else { return nil }
+        return StreamingRevision(
+            messageID: message.id,
+            textCount: message.text.count,
+            reasoningCount: message.reasoning?.count ?? 0,
+            generationState: message.generationState,
+            activityCount: model.toolActivitiesByConversation[conversation.id]?.count ?? 0
+        )
     }
 
     private func toolActivities(for message: ChatMessage) -> [ToolActivityPresentation] {
@@ -82,6 +133,42 @@ struct TaskTimelineView: View {
         .id(message.id)
         .accessibilityLabel("Your request")
     }
+}
+
+struct ConversationScrollMetrics: Equatable {
+    let offset: CGFloat
+    let distanceFromBottom: CGFloat
+}
+
+struct ConversationScrollState: Equatable {
+    static let nearBottomThreshold: CGFloat = 72
+    static let upwardScrollTolerance: CGFloat = 1
+
+    private(set) var isFollowingLatest = true
+    private var previousOffset: CGFloat?
+
+    mutating func observe(_ metrics: ConversationScrollMetrics) {
+        if let previousOffset,
+           metrics.offset < previousOffset - Self.upwardScrollTolerance {
+            isFollowingLatest = false
+        }
+        if metrics.distanceFromBottom <= Self.nearBottomThreshold {
+            isFollowingLatest = true
+        }
+        previousOffset = metrics.offset
+    }
+
+    mutating func resumeFollowing() {
+        isFollowingLatest = true
+    }
+}
+
+private struct StreamingRevision: Equatable {
+    let messageID: UUID
+    let textCount: Int
+    let reasoningCount: Int
+    let generationState: MessageGenerationState?
+    let activityCount: Int
 }
 
 private struct RecoveryBanner: View {

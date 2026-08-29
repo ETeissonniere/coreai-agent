@@ -3,6 +3,14 @@ import FoundationModels
 import QwenAgentRuntime
 import Testing
 
+@Test func toolIdentityScopesReusedOpaqueIDsByGenerationAttempt() {
+    let first = ToolIdentity.uuid(forOpaqueID: "call-1", scope: "attempt-a")
+    let retry = ToolIdentity.uuid(forOpaqueID: "call-1", scope: "attempt-b")
+
+    #expect(first != retry)
+    #expect(first == ToolIdentity.uuid(forOpaqueID: "call-1", scope: "attempt-a"))
+}
+
 @Test func deterministicToolCountsExtendedGraphemeClusters() async throws {
     let tool = CharacterCountTool()
     let output = try await tool.call(arguments: CharacterCountArguments(text: "A👨‍👩‍👧‍👦é"))

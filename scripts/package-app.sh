@@ -46,4 +46,11 @@ if ! cp -cR "$title_model_source" "$title_model_destination" 2>/dev/null; then
     cp -R "$title_model_source" "$title_model_destination"
 fi
 
+# SwiftPM applies a linker signature to the executable, but assembling an app
+# around that binary changes its signing context and adds resources that must be
+# sealed. Sign only after the complete bundle has been assembled so taskgated
+# can validate the app at launch.
+codesign --force --deep --sign - "$app_dir"
+codesign --verify --deep --strict --verbose=2 "$app_dir"
+
 printf 'Packaged %s\n' "$app_dir"

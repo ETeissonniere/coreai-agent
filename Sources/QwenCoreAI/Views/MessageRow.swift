@@ -4,6 +4,7 @@ import SwiftUI
 struct MessageRow: View {
     let message: ChatMessage
     var toolActivities: [ToolActivityPresentation] = []
+    var executionTrace: AssistantExecutionTrace? = nil
     var activePhase: ModelPhase? = nil
     var retry: (() -> Void)? = nil
 
@@ -22,6 +23,7 @@ struct MessageRow: View {
                         ReasoningDisclosureView(
                             text: message.reasoning ?? "",
                             toolActivities: toolActivities,
+                            executionTrace: executionTrace,
                             state: message.generationState ?? .complete,
                             isActivelyThinking: message.generationState == .streaming && message.text.isEmpty,
                             metrics: message.metrics
@@ -112,6 +114,7 @@ private struct GenerationWaitingView: View {
 private struct ReasoningDisclosureView: View {
     let text: String
     let toolActivities: [ToolActivityPresentation]
+    let executionTrace: AssistantExecutionTrace?
     let state: MessageGenerationState
     let isActivelyThinking: Bool
     let metrics: GenerationMetrics?
@@ -120,12 +123,14 @@ private struct ReasoningDisclosureView: View {
     init(
         text: String,
         toolActivities: [ToolActivityPresentation],
+        executionTrace: AssistantExecutionTrace?,
         state: MessageGenerationState,
         isActivelyThinking: Bool,
         metrics: GenerationMetrics?
     ) {
         self.text = text
         self.toolActivities = toolActivities
+        self.executionTrace = executionTrace
         self.state = state
         self.isActivelyThinking = isActivelyThinking
         self.metrics = metrics
@@ -163,21 +168,18 @@ private struct ReasoningDisclosureView: View {
 
             if isExpanded {
                 VStack(alignment: .leading, spacing: 12) {
-                    if !text.isEmpty {
-                        ExecutionTraceStep(icon: "brain.head.profile", tint: .secondary) {
-                            Text(text)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .lineSpacing(3)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-
-                    ForEach(toolActivities) { activity in
-                        ExecutionTraceStep(icon: activity.isWebActivity ? "globe" : "wrench.and.screwdriver", tint: statusColor(activity.state)) {
-                            InlineToolActivityView(activity: activity)
+                    ForEach(orderedEntries) { entry in
+                        switch entry.content {
+                        case .reasoning(let reasoning):
+                            ExecutionTraceStep(icon: "brain.head.profile", tint: .secondary) {
+                                reasoningView(reasoning)
+                            }
+                        case .tool(let invocationID):
+                            if let activity = toolActivities.first(where: { $0.id == invocationID }) {
+                                ExecutionTraceStep(icon: activity.isWebActivity ? "globe" : "wrench.and.screwdriver", tint: statusColor(activity.state)) {
+                                    InlineToolActivityView(activity: activity)
+                                }
+                            }
                         }
                     }
 
@@ -213,6 +215,24 @@ private struct ReasoningDisclosureView: View {
                 isExpanded = true
             }
         }
+    }
+
+    private var orderedEntries: [AssistantExecutionTrace.Entry] {
+        if let executionTrace, !executionTrace.entries.isEmpty { return executionTrace.entries }
+        var fallback: [AssistantExecutionTrace.Entry] = []
+        if !text.isEmpty { fallback.append(.init(content: .reasoning(text))) }
+        fallback.append(contentsOf: toolActivities.map { .init(content: .tool($0.id)) })
+        return fallback
+    }
+
+    private func reasoningView(_ reasoning: String) -> some View {
+        Text(reasoning)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .lineSpacing(3)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private var summary: String {

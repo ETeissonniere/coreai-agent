@@ -3,6 +3,29 @@ import Foundation
 import FoundationModels
 import QwenAgentRuntime
 
+actor LifecycleForwardingState {
+    private var forwardedCount: Int
+    private var waiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
+
+    init(initialCount: Int) {
+        forwardedCount = initialCount
+    }
+
+    func didForwardEvent() {
+        forwardedCount += 1
+        let ready = waiters.filter { $0.target <= forwardedCount }
+        waiters.removeAll { $0.target <= forwardedCount }
+        for waiter in ready { waiter.continuation.resume() }
+    }
+
+    func wait(until target: Int) async {
+        guard forwardedCount < target else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append((target, continuation))
+        }
+    }
+}
+
 actor CoreAIModelService: ModelServing {
     private struct ConversationSession {
         var session: LanguageModelSession
@@ -116,6 +139,7 @@ actor CoreAIModelService: ModelServing {
         let conversationID = request.conversationID
         let prompt = promptOverride ?? request.prompt
         let enabledSkillIDs = request.enabledSkillIDs
+        continuation.yield(.attemptStarted(UUID()))
 
         var state = sessions[conversationID] ?? makeConversationSession(
             model: model,
@@ -192,11 +216,15 @@ actor CoreAIModelService: ModelServing {
         var journalEventCount = state.journalEventCount
         var finalResponse = ""
         let journalStream = await state.journal.stream(after: journalEventCount)
+        let lifecycleForwardingState = LifecycleForwardingState(initialCount: journalEventCount)
         let lifecycleForwarder = Task {
             for await event in journalStream {
-                if case .reasoning = event { continue }
-                if case .response = event { continue }
+                if case .response = event {
+                    await lifecycleForwardingState.didForwardEvent()
+                    continue
+                }
                 continuation.yield(.agent(event))
+                await lifecycleForwardingState.didForwardEvent()
             }
         }
         defer { lifecycleForwarder.cancel() }
@@ -220,6 +248,7 @@ actor CoreAIModelService: ModelServing {
             state.contextTokens = contextTokens
             sessions[conversationID] = state
             let liveEvents = await state.journal.snapshot()
+            await lifecycleForwardingState.wait(until: liveEvents.count)
             continuation.yield(.context(contextStatus(
                 usedTokens: contextTokens,
                 compactionCount: state.compactionCount,
@@ -256,6 +285,7 @@ actor CoreAIModelService: ModelServing {
             turnID: request.userMessageID
         ))
         let completedEvents = await state.journal.snapshot()
+        await lifecycleForwardingState.wait(until: completedEvents.count)
         journalEventCount = completedEvents.count
         state.journalEventCount = journalEventCount
         if !finalResponse.isEmpty {
@@ -284,6 +314,7 @@ actor CoreAIModelService: ModelServing {
         sessions[conversationID] = state
         } catch {
             lifecycleForwarder.cancel()
+            await lifecycleForwarder.value
             let failedEvents = await state.journal.snapshot()
             state.journalEventCount = failedEvents.count
             sessions[conversationID] = state

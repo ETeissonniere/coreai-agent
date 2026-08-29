@@ -15,6 +15,7 @@ protocol ModelServing: AnyObject, Sendable {
 }
 
 enum GenerationEvent: Sendable {
+    case attemptStarted(UUID)
     case context(ContextStatus)
     case content(GenerationUpdate)
     case agent(AgentLifecycleEvent)

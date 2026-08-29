@@ -220,6 +220,68 @@ import Testing
     #expect(!retained.map(\.content).joined().contains("transient payload"))
 }
 
+@Test func executionTraceInterleavesReasoningAndToolsChronologically() {
+    let firstToolID = UUID()
+    let secondToolID = UUID()
+    var trace = AssistantExecutionTrace()
+
+    trace.recordReasoningSnapshot("Form a search query.")
+    trace.recordTool(firstToolID)
+    trace.recordReasoningSnapshot("Form a search query.\n\nCheck a second source.")
+    trace.recordTool(secondToolID)
+    trace.recordReasoningSnapshot("Form a search query.\n\nCheck a second source.\n\nSynthesize the answer.")
+
+    #expect(trace.entries.map(\.content) == [
+        .reasoning("Form a search query."),
+        .tool(firstToolID),
+        .reasoning("Check a second source."),
+        .tool(secondToolID),
+        .reasoning("Synthesize the answer."),
+    ])
+}
+
+@Test func executionTraceUpdatesStreamingReasoningAndDeduplicatesTools() {
+    let toolID = UUID()
+    var trace = AssistantExecutionTrace()
+
+    trace.recordReasoningSegment("Draft")
+    trace.recordReasoningSegment("Draft the query")
+    trace.recordTool(toolID)
+    trace.recordTool(toolID)
+    trace.recordReasoningSegment("Review result")
+    trace.recordReasoningSegment("Review result")
+
+    #expect(trace.entries.map(\.content) == [
+        .reasoning("Draft the query"),
+        .tool(toolID),
+        .reasoning("Review result"),
+    ])
+    #expect(trace.reasoningText == "Draft the query\n\nReview result")
+}
+
+@Test func contentOrderingBarrierWaitsForDelayedLifecycleForwarding() async throws {
+    let forwarding = LifecycleForwardingState(initialCount: 0)
+    let probe = AsyncTestProbe()
+    let waiter = Task {
+        await forwarding.wait(until: 1)
+        await probe.markComplete()
+    }
+
+    try await Task.sleep(for: .milliseconds(10))
+    let completedBeforeForwarding = await probe.isComplete
+    #expect(!completedBeforeForwarding)
+
+    await forwarding.didForwardEvent()
+    await waiter.value
+    let completedAfterForwarding = await probe.isComplete
+    #expect(completedAfterForwarding)
+}
+
+private actor AsyncTestProbe {
+    private(set) var isComplete = false
+    func markComplete() { isComplete = true }
+}
+
 @Test func reasoningMarkerIsSeparatedFromVisibleAnswer() {
     let separated = CoreAIModelService.separateReasoning(
         from: "Check the premise.\n</think>\n# Answer\n\nFirst line.\nSecond line.",
@@ -262,9 +324,109 @@ import Testing
     )
 }
 
+@MainActor @Test func markdownRenderingRecognizesPipeTables() {
+    let source = """
+    Before
+
+    | Model | Use | Speed |
+    | :--- | --- | ---: |
+    | Small | Chat | Fast |
+    | Large | Research |
+
+    After
+    """
+
+    #expect(
+        MarkdownProseView.parse(source) == [
+            .paragraph(["Before"]),
+            .table(
+                headers: ["Model", "Use", "Speed"],
+                alignments: [.leading, .leading, .trailing],
+                rows: [["Small", "Chat", "Fast"], ["Large", "Research"]]
+            ),
+            .paragraph(["After"]),
+        ]
+    )
+}
+
+@MainActor @Test func markdownRenderingSupportsEscapedPipesInTables() {
+    let source = """
+    Name | Expression
+    --- | ---
+    Choice | A \\| B
+    """
+
+    #expect(
+        MarkdownProseView.parse(source) == [
+            .table(
+                headers: ["Name", "Expression"],
+                alignments: [.leading, .leading],
+                rows: [["Choice", "A \\| B"]]
+            ),
+        ]
+    )
+}
+
+@MainActor @Test func markdownRenderingLeavesInvalidTableSyntaxAsProse() {
+    let source = "Name | Use\n-- | ---\nSmall | Chat"
+    #expect(MarkdownProseView.parse(source) == [.paragraph(["Name | Use", "-- | ---", "Small | Chat"])])
+}
+
 @Test func titleModelOutputIsReducedToAPlainShortTitle() {
     #expect(TitleModelService.clean("<think>hidden</think>\n**KV Cache Planning**") == "KV Cache Planning")
     #expect(TitleModelService.clean("   ") == nil)
+}
+
+@Test func missingTitleModelReportsAssetFallback() async {
+    let service = TitleModelService(resourcesURL: nil)
+
+    #expect(
+        await service.generateTitle(for: "Explain KV cache allocation")
+            == .fallback(.assetMissing)
+    )
+}
+
+@Test func titleModelReturnsCleanGeneratedTitle() async {
+    let service = TitleModelService(
+        resourcesURL: URL(filePath: "/unused-title-model"),
+        generationOverride: { _ in "<think>drafting</think>\n**KV Cache Planning**" }
+    )
+
+    #expect(
+        await service.generateTitle(for: "Explain KV cache allocation")
+            == .generated("KV Cache Planning")
+    )
+}
+
+@Test func titleModelReportsGenerationAndInvalidOutputFallbacks() async {
+    struct TestFailure: Error {}
+    let failedService = TitleModelService(
+        resourcesURL: URL(filePath: "/unused-title-model"),
+        generationOverride: { _ in throw TestFailure() }
+    )
+    let emptyService = TitleModelService(
+        resourcesURL: URL(filePath: "/unused-title-model"),
+        generationOverride: { _ in "   " }
+    )
+
+    #expect(
+        await failedService.generateTitle(for: "Explain KV cache allocation")
+            == .fallback(.generationFailed)
+    )
+    #expect(
+        await emptyService.generateTitle(for: "Explain KV cache allocation")
+            == .fallback(.invalidOutput)
+    )
+}
+
+@Test func titleModelFailureDiagnosticsDistinguishMissingAssetFromRuntimeFailures() {
+    #expect(TitleGenerationFailure.assetMissing.userMessage.contains("missing"))
+    #expect(TitleGenerationFailure.modelLoadFailed.userMessage.contains("could not be loaded"))
+    #expect(TitleGenerationFailure.generationFailed.userMessage.contains("could not be generated"))
+    #expect(
+        TitleGenerationFailure.assetMissing.userMessage
+            != TitleGenerationFailure.modelLoadFailed.userMessage
+    )
 }
 
 @Test func appStateRoundTripsAndRepairsInterruptedGeneration() throws {
