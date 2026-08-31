@@ -4,7 +4,7 @@
   "platform": "macOS",
   "minimumOS": "27.0",
   "compression": "4bit",
-  "maxContextLength": 4096,
-  "artifact": "mlboydaisuke/Qwen3.8-27B-CoreAI/gpu-pipelined/qwen3_8_27b_decode_int4lin",
+  "maxContextLength": 131072,
+  "artifact": "ETeissonniere/Qwen3.8-27B-CoreAI-128K/gpu-pipelined/qwen3_8_27b_decode_int4lin",
   "status": "community-coreai-port"
 }

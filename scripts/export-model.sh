@@ -8,7 +8,7 @@ mkdir -p "$repo_root/.build"
 export_worktree="$(mktemp -d "$repo_root/.build/coreai-export.XXXXXX")"
 coreai_dir="$export_worktree/coreai-models"
 trap 'rm -rf "$export_worktree"' EXIT HUP INT TERM
-output_dir="$repo_root/Models/Qwen3.8-27B-CoreAI-100K/gpu-pipelined"
+output_dir="$repo_root/Models/Qwen3.8-27B-CoreAI-128K/gpu-pipelined"
 checkpoint_dir="$repo_root/.build/checkpoints/Qwen3.8-27B"
 required_kib=$((80 * 1024 * 1024))
 available_kib="$(df -Pk "$repo_root" | awk 'NR == 2 { print $4 }')"
@@ -59,7 +59,7 @@ if [ "$overlay_tree_hash" != "$COREAI_OVERLAY_TREE_SHA256" ]; then
 fi
 uv sync --frozen --project "$coreai_dir" --python 3.11
 
-printf '%s\n' 'Exporting Qwen3.8-27B INT4 with a true 100,000-token dynamic KV bound.'
+printf '%s\n' 'Exporting Qwen3.8-27B INT4 with a 131,072-token dynamic KV bound.'
 printf '%s\n' 'This downloads the pinned BF16 checkpoint and may take hours.'
 mkdir -p "$checkpoint_dir"
 HF_HOME="$repo_root/.build/huggingface" hf download "$QWEN_MODEL_REPOSITORY" \
@@ -69,9 +69,9 @@ HF_HOME="$repo_root/.build/huggingface" hf download "$QWEN_MODEL_REPOSITORY" \
     "$zoo_dir/conversion/export_qwen3_5_decode_pipelined.py" \
     int4lin \
     --hf-id "$checkpoint_dir" \
-    --max-ctx 100000 \
+    --max-ctx 131072 \
     --out-dir "$output_dir"
 
 metadata="$output_dir/qwen3_8_27b_decode_int4lin/metadata.json"
 perl -pi -e 's#"hf_model_id": "[^"]+"#"hf_model_id": "Qwen/Qwen3.8-27B"#' "$metadata"
-printf '%s\n' 'Export complete. Create Models/Qwen3.8-27B-CoreAI-100K/SHA256SUMS before packaging.'
+printf '%s\n' 'Export complete. Create Models/Qwen3.8-27B-CoreAI-128K/SHA256SUMS before packaging.'

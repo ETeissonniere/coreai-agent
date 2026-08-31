@@ -25,19 +25,18 @@ single-token decoder with fixed-shape recurrent states.
 
 ## Artifact used by this project
 
-The default download is the community text-only INT4 Core AI bundle from
-`mlboydaisuke/Qwen3.8-27B-CoreAI`, derived from official checkpoint revision
+The default download is this project's text-only INT4 Core AI bundle from
+`ETeissonniere/Qwen3.8-27B-CoreAI-128K`, derived from official checkpoint revision
 `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`. It is approximately 18.8 GB and
 uses the community `qwen3_5` authoring overlay on Apple's Core AI tooling.
 The converted artifact is fetched at immutable Hugging Face revision
-`aaccef94c3bd9dee953cbb5fbd0fd824829c7e4f`; the download and package steps
+`d5e876006a7882fa8c1fb52b73fe86636e653616`; the download and package steps
 verify the committed SHA-256 manifest before accepting its model and tokenizer files.
 
-The publisher reports 15/16 teacher-forced tokens matching the BF16 oracle,
-with the sole mismatch below its confidence threshold, and 22.2 decode
-tokens/second on an M4 Max 128 GB. Those are upstream measurements, not
-measurements from this Mac. Run the bundled benchmark before treating them as
-local performance claims.
+On this project's M4 Pro with 48 GB unified memory, a 128-token prompt and
+256-token decode measured approximately 10.1 prompt tokens/second and 10.0
+generated tokens/second. Performance varies with OS, prompt length, memory
+pressure, and thermal state.
 
 The INT4 artifact is preferred here over the 28 GB INT8 version because this is
 a 48 GB M4 Pro. The model remains Mac-only. The vision and speculative-decoding
@@ -64,16 +63,14 @@ make benchmark MODEL="$PWD/Models/Qwen3.8-27B-CoreAI/gpu-pipelined/qwen3_8_27b_d
 ```
 
 `make export` reproduces the conversion from the official BF16 checkpoint using
-the community graph-authoring overlay and exports INT4 with a true 100,000-token
+the community graph-authoring overlay and exports INT4 with a 131,072-token
 dynamic-shape bound. It requires at least 80 GiB of free working space and is
-separate from `make download`. The packager prefers that artifact when present
-and otherwise keeps the verified 4,096-token bundle; it never relabels the old
-graph as 100K.
+separate from `make download`. The packager prefers that fresh local artifact
+when present and otherwise uses the verified 128K download.
 
-At 100K, the 16 full-attention layers use about 6.1 GiB of FP16 KV state in
+At 128K, the 16 full-attention layers can use about 8 GiB of FP16 KV state in
 addition to the approximately 18 GiB weights. The vendored runtime caps dynamic
-cache growth at the bundle limit so exponential growth stops at 100,000 rather
-than overshooting to 131,072 slots (about 8 GiB).
+cache growth at the bundle limit.
 
 `make export-title-model` uses Apple's official exporter to build the bundled
 Qwen3-0.6B title generator as macOS INT4 block-32 with a 1,024-token context.
@@ -101,7 +98,7 @@ offline validation of the pins, shell scripts, and checksum rejection path.
 - Apple Core AI PyTorch tooling: https://apple.github.io/coreai-torch/
 - Official Qwen checkpoint: https://huggingface.co/Qwen/Qwen3.8-27B
 - Port and gates: https://github.com/john-rocky/coreai-model-zoo/tree/main/models/qwen3.8-27b
-- Core AI artifact: https://huggingface.co/mlboydaisuke/Qwen3.8-27B-CoreAI
+- Core AI artifact: https://huggingface.co/ETeissonniere/Qwen3.8-27B-CoreAI-128K
 
 ## Runtime patch ownership
 
