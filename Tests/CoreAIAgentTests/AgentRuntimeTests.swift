@@ -176,16 +176,15 @@ import Testing
     #expect(await provider.callCount == 1)
 }
 
-@Test func webSearchReportsExhaustedTurnBudgetWithoutCallingProvider() async throws {
+@Test func webSearchAllowsMoreThanThreeCallsPerTurn() async throws {
     let provider = CountingSearchProvider()
-    let budget = ToolCallBudget(maximumCalls: 1)
-    let tool = WebSearchTool(provider: provider, budget: budget, retryDelays: [])
-    _ = try await tool.call(arguments: WebSearchArguments(query: "first"))
+    let tool = WebSearchTool(provider: provider, retryDelays: [])
 
-    let output = try await tool.call(arguments: WebSearchArguments(query: "second"))
+    for query in ["first", "second", "third", "fourth"] {
+        _ = try await tool.call(arguments: WebSearchArguments(query: query))
+    }
 
-    #expect(output.contains("per-turn limit of 1 web searches was reached"))
-    #expect(await provider.callCount == 1)
+    #expect(await provider.callCount == 4)
 }
 
 @Test func fixedSearchProviderUsesOnlyPinnedOriginAndBoundedResponse() async throws {
