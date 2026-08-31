@@ -14,17 +14,18 @@ binary_dir="$(swift build -c release --show-bin-path)"
 app_dir="$repo_root/dist/CoreAI Agent.app"
 contents="$app_dir/Contents"
 model_source="$repo_root/Models/Qwen3.8-27B-CoreAI"
-model_100k_source="$repo_root/Models/Qwen3.8-27B-CoreAI-100K"
+model_128k_source="$repo_root/Models/Qwen3.8-27B-CoreAI-128K"
 model_destination="$contents/Resources/Models/Qwen3.8-27B-CoreAI"
 title_model_source="$repo_root/Models/TitleModel"
 title_model_destination="$contents/Resources/Models/TitleModel"
 nemotron_model_source="$repo_root/Models/Nemotron-3-Nano-4B-CoreAI"
+nemotron_128k_source="$repo_root/Models/Nemotron-3-Nano-4B-CoreAI-128K"
 nemotron_model_destination="$contents/Resources/Models/Nemotron-3-Nano-4B-CoreAI"
 icon_source="$repo_root/Packaging/CoreAIAgent.icns"
 . "$repo_root/scripts/model-sources.env"
 
-if [ -f "$model_100k_source/gpu-pipelined/qwen3_8_27b_decode_int4lin/metadata.json" ]; then
-    model_source="$model_100k_source"
+if [ -f "$model_128k_source/gpu-pipelined/qwen3_8_27b_decode_int4lin/metadata.json" ]; then
+    model_source="$model_128k_source"
 fi
 if [ ! -f "$model_source/gpu-pipelined/qwen3_8_27b_decode_int4lin/metadata.json" ]; then
     printf 'error: model is missing; run make download first.\n' >&2
@@ -52,10 +53,15 @@ if ! cp -cR "$title_model_source" "$title_model_destination" 2>/dev/null; then
     cp -R "$title_model_source" "$title_model_destination"
 fi
 
-"$repo_root/scripts/verify-nemotron-package-source.sh" \
-    "$nemotron_model_source" \
-    "$NEMOTRON_COREAI_MODEL_SHA256" \
-    "$NEMOTRON_MODEL_REVISION"
+if [ -f "$nemotron_128k_source/gpu-pipelined/nemotron_3_nano_4b_decode_int8hu/metadata.json" ]; then
+    nemotron_model_source="$nemotron_128k_source"
+    "$repo_root/scripts/verify-model-assets.sh" "$nemotron_model_source"
+else
+    "$repo_root/scripts/verify-nemotron-package-source.sh" \
+        "$nemotron_model_source" \
+        "$NEMOTRON_COREAI_MODEL_SHA256" \
+        "$NEMOTRON_MODEL_REVISION"
+fi
 rm -rf "$nemotron_model_destination"
 if ! cp -cR "$nemotron_model_source" "$nemotron_model_destination" 2>/dev/null; then
     cp -R "$nemotron_model_source" "$nemotron_model_destination"

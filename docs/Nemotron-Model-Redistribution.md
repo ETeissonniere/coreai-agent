@@ -33,7 +33,7 @@ At the feasibility-spike revision, `model.safetensors` is 7,947,142,640 bytes
 with SHA-256
 `55d4e2519456c4a9bddf596b0748d630e3b2ce6ff6f4c2b7ed3e07e2b00dad42`.
 The bundled Core AI `main.mlirb` has SHA-256
-`d4967f627d20274ba8a06e8318f9f82e289b05c1c7e7f3b63b4c597cb35d0970`.
+`564442f10d449125b46a2f39f6ea70ea3f577e31b0aa301cdfd820690d0daff8`.
 The machine-readable record is packaged as
 `ModelProvenance/Nemotron-3-Nano-4B-CoreAI.json`.
 
@@ -118,7 +118,7 @@ obligation to audit any data or code actually copied.
 ## Publishing the converted artifact
 
 The verified conversion is published at immutable Hugging Face revision
-[`edf3a07fcd5657d4c2549ace034fa864681337a1`](https://huggingface.co/ETeissonniere/Nemotron-3-Nano-4B-CoreAI/tree/edf3a07fcd5657d4c2549ace034fa864681337a1).
+[`d024ef3621aaeee910f1e9732388b37211511521`](https://huggingface.co/ETeissonniere/Nemotron-3-Nano-4B-CoreAI-128K/tree/d024ef3621aaeee910f1e9732388b37211511521).
 The app's download tooling pins this revision rather than following `main`.
 
 The license permits commercial distribution of Derivative Works, including an
@@ -131,7 +131,7 @@ verified model tree together with:
   NVIDIA Nemotron Model License.”;
 - the machine-readable provenance JSON and `SHA256SUMS`;
 - a model card that identifies the NVIDIA source repository and immutable
-  revision, describes the Core AI INT8 modifications, states the 4,096-token
+  revision, describes the Core AI INT8 modifications, states the 131,072-token
   operational context of this conversion, and says the conversion is not
   produced, endorsed, or certified by NVIDIA.
 
