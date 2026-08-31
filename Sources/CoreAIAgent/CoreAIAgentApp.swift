@@ -44,7 +44,7 @@ struct CoreAIAgentApp: App {
             }
         }
         Settings {
-            AcknowledgmentsView()
+            SettingsView()
         }
     }
 }
