@@ -9,8 +9,10 @@ with Hugging Face Transformers 5.12.1. The checkpoint contains 21 Mamba-2
 mixers, four grouped-query attention layers, and 17 standalone ReLU² MLPs.
 The full-model work covers all 42 layers, strict checkpoint mapping, the four
 attention KV states, 21 convolution/recurrent Mamba states, tokenizer/chat
-protocols, and a one-token stateful Core AI graph. It remains a spike: the
-runtime performance gate below failed, so the app must not bundle this artifact.
+protocols, and a one-token stateful Core AI graph. The original blanket-INT4,
+ANE-oriented experiment failed. A later reference-informed GPU-pipelined INT8
+implementation passes the runtime gate on this Mac; app integration still
+requires the remaining quality, licensing, and end-to-end harness gates.
 
 The spike has three implementations of the same layer:
 
@@ -51,10 +53,48 @@ UV_CACHE_DIR=.build/uv-cache uv run --frozen \
   --max-context 4096
 ```
 
-Use `--skip-bf16` to reproduce only the INT4 candidate and
-`--mamba-scan-dtype fp16` to reproduce the final all-FP16 SSM experiment. The
-rejected generated assets were deleted after measurement; only the source
-checkpoint remains locally for reproducibility.
+Use `--skip-bf16` to reproduce only the selective INT8 candidate. The exporter
+uses FP16 recurrent state, Apple's macOS RMSNorm and SDPA composites, two
+fixed-shape recurrent states, and pre-export INT8 weight compression. Linear
+body weights use clipped symmetric block-32 quantization; the untied 131K-vocab
+head uses absmax symmetric block-32 quantization.
+
+## Reference-informed GPU reproduction
+
+The initial spike was too focused on ANE compilation and post-export INT4.
+`mweinbach/NemotronCoreAI` demonstrates the relevant Core AI GPU/AOT execution
+pattern, although that repository targets the unrelated 0.6B streaming ASR
+FastConformer. The directly applicable reference is the Nemotron-H conversion
+in `john-rocky/coreai-model-zoo`. Neither project is a runtime or source
+dependency of this repository; their behavior and graph contracts were used as
+references for this local reimplementation.
+
+The working shape is a static `[1,1]` query on the MPSGraph GPU path. At one
+token, Mamba-2 becomes a loop-free recurrence step. Prompt ingestion therefore
+runs one token at a time with `COREAI_CHUNK_THRESHOLD=1`. The four attention
+layers use a growing KV pair, while all 21 Mamba layers share two fixed-shape
+state tensors: convolution `[21,1,9728,3]` and recurrence
+`[21,1,96,80,128]`. The vendored Swift pipelined engine already supports these
+two extra states.
+
+An isolated copy of the published reference artifact was first canaried from
+`.build/reference-models`:
+
+| Artifact | Size | Load | TTFT | Prefill | Decode |
+|---|---:|---:|---:|---:|---:|
+| Published INT8 reference | 4.609 GB | 7.60 s | 1.10 s | 22.8 tok/s | 51.4 tok/s |
+| Locally reproduced INT8 | 4.609 GB | 3.52 s | 0.67 s | 37.5 tok/s | 49.9 tok/s |
+
+Both canaries emitted the same 64-token stream for the fixed smoke prompt. The
+local artifact was built from the pinned NVIDIA BF16 checkpoint using only the
+checked-in `nemotron_h` implementation and Apple tooling. Generated artifacts
+remain under `.build` and are neither packaged nor committed.
+
+The earlier INT4 result below remains useful negative evidence. Symmetric INT4
+is smaller, but the reference evaluation reports quality loss; the only INT4
+recipe that recovered its clean-token oracle used asymmetric block-16 and was
+roughly 4.6 times slower than INT8. INT8 is therefore the current Fast-model
+candidate despite its larger bundle.
 
 ## Findings on this Mac
 
@@ -107,7 +147,7 @@ Qwen throughput number is claimed. This does not affect the failed gate: the
 candidate scan already loses to the naïve recurrence on the same exact-size
 Core AI mixer graph.
 
-## Full-model export and runtime gate
+## Historical failed INT4/ANE route
 
 `nemotron_h.py` reauthors the full architecture without shipping Hugging Face,
 MLX, or llama.cpp as runtime dependencies. The strict checkpoint validation saw
@@ -150,13 +190,11 @@ SSM arithmetic to FP16 increased that to 1.08% and 2.51%, respectively. Two
 bounded attempts to export the all-FP16 full graph were terminated by macOS
 memory pressure during `export_to_coreai`, before an asset was written.
 
-The only runnable full artifact falls below one token per second and cannot
-honestly serve as a **Fast** model. No controlled Qwen comparison is claimed
-because the bounded fresh Qwen canary above did not finish loading. The
-candidate was not promoted into the app bundle. The exact native blocker is ANE
-compilation of FP32 regions around the SSM graph; the lower-precision alternative
-compounds numerical drift and could not be exported on this host under the
-available memory envelope.
+This route's only runnable full artifact fell below one token per second and
+could not serve as a **Fast** model. That conclusion applies to the historical
+ANE/post-export-INT4 graph, not the GPU-pipelined selective-INT8 reproduction
+above. The exact blocker was ANE compilation of FP32 regions around the SSM
+graph; the GPU route avoids treating ANE compatibility as a requirement.
 
 ## Numerical validation
 

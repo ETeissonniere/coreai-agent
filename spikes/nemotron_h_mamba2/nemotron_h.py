@@ -15,9 +15,13 @@ from nemotron_h_mamba2 import Mamba2Config, NemotronHMamba2Mixer
 try:
     from coreai_models.primitives._ops import mutable_slice_update
     from coreai_models.primitives.macos.cache import KVCache
+    from coreai_models.primitives.macos.rms_norm import RMSNorm as CoreAIRMSNorm
+    from coreai_models.primitives.macos.sdpa import SDPA
 except ImportError:  # The pure PyTorch reference remains usable without Apple's package.
     KVCache = None
     mutable_slice_update = None
+    CoreAIRMSNorm = None
+    SDPA = None
 
 
 @dataclass(frozen=True)
@@ -120,7 +124,7 @@ class NemotronHState:
         )
 
 
-class RMSNorm(nn.Module):
+class TorchRMSNorm(nn.Module):
     def __init__(self, size: int, eps: float) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.ones(size))
@@ -131,6 +135,40 @@ class RMSNorm(nn.Module):
             inputs.float().square().mean(dim=-1, keepdim=True) + self.eps
         )
         return (normalized * self.weight.float()).to(inputs.dtype)
+
+
+# Use Apple's composite primitive for exported graphs while keeping the spike's
+# pure-PyTorch numerical tests runnable without the Core AI package installed.
+RMSNorm = CoreAIRMSNorm or TorchRMSNorm
+
+
+class CoreAISSMState:
+    """Fixed-shape recurrent state with a rank-correct Core AI slice update.
+
+    Apple's current helper omits the final dimension from ``end`` for states
+    with rank greater than three. Keeping this small adapter local makes the
+    Nemotron exporter reproducible without patching the external checkout.
+    """
+
+    def __init__(self, states: torch.Tensor) -> None:
+        self.states = states
+
+    def update_states(self, layer_index: int, new_state: torch.Tensor) -> None:
+        if mutable_slice_update is None:
+            raise RuntimeError("Apple coreai-models Python package is required for export")
+        rank = self.states.dim()
+        begin = torch.tensor(
+            [layer_index, *([0] * (rank - 1))], dtype=torch.int32
+        )
+        end = torch.tensor(
+            [layer_index + 1, *self.states.shape[1:]], dtype=torch.int32
+        )
+        mutable_slice_update(
+            x=self.states,
+            update=new_state.unsqueeze(0),
+            begin=begin,
+            end=end,
+        )
 
 
 class NemotronHMLP(nn.Module):
@@ -159,6 +197,11 @@ class NemotronHAttention(nn.Module):
             config.hidden_size, self.num_key_value_heads * self.head_dim, bias=False
         )
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, config.hidden_size, bias=False)
+        self.sdpa = (
+            SDPA(scale=self.head_dim**-0.5, is_causal=True)
+            if SDPA is not None
+            else None
+        )
 
     def forward(
         self, inputs: torch.Tensor, past_key: torch.Tensor, past_value: torch.Tensor
@@ -217,12 +260,15 @@ class NemotronHAttention(nn.Module):
             seq_len=sequence_length,
             query_len=query_length,
         )
-        key = key.repeat_interleave(self.groups, dim=1)
-        value = value.repeat_interleave(self.groups, dim=1)
-        scores = torch.matmul(query.float(), key.float().transpose(-1, -2))
-        scores = scores / self.head_dim**0.5
-        probabilities = F.softmax(scores, dim=-1).to(inputs.dtype)
-        output = torch.matmul(probabilities, value)
+        if self.sdpa is not None:
+            output = self.sdpa(query, key, value)
+        else:
+            key = key.repeat_interleave(self.groups, dim=1)
+            value = value.repeat_interleave(self.groups, dim=1)
+            scores = torch.matmul(query.float(), key.float().transpose(-1, -2))
+            scores = scores / self.head_dim**0.5
+            probabilities = F.softmax(scores, dim=-1).to(inputs.dtype)
+            output = torch.matmul(probabilities, value)
         output = output.transpose(1, 2).reshape(batch, query_length, -1)
         return self.o_proj(output)
 
@@ -345,6 +391,8 @@ class NemotronHCoreAIDecode(NemotronHForCausalLM):
         if KVCache is None or mutable_slice_update is None:
             raise RuntimeError("Apple coreai-models Python package is required for export")
         kv_cache = KVCache(key_cache, value_cache)
+        convolution_cache = CoreAISSMState(mamba_convolution)
+        recurrent_cache = CoreAISSMState(mamba_recurrent)
         hidden = self.backbone.embeddings(input_ids)
         offset = position_ids.shape[1] - input_ids.shape[1]
         sequence_length = position_ids.shape[1]
@@ -354,17 +402,21 @@ class NemotronHCoreAIDecode(NemotronHForCausalLM):
             residual = hidden
             normalized = layer.norm(hidden)
             if layer.layer_type == "mamba":
+                convolution = convolution_cache.states.narrow(
+                    0, mamba_index, 1
+                ).squeeze(0)
+                recurrent = recurrent_cache.states.narrow(
+                    0, mamba_index, 1
+                ).squeeze(0)
                 hidden, convolution, recurrent = layer.mixer(
                     normalized,
-                    mamba_convolution[mamba_index],
-                    mamba_recurrent[mamba_index],
+                    convolution,
+                    recurrent,
                     "sequential",
                 )
-                self._update_packed_state(mamba_convolution, mamba_index, convolution)
-                self._update_packed_state(
-                    mamba_recurrent,
-                    mamba_index,
-                    recurrent.to(mamba_recurrent.dtype),
+                convolution_cache.update_states(mamba_index, convolution)
+                recurrent_cache.update_states(
+                    mamba_index, recurrent.to(mamba_recurrent.dtype)
                 )
                 mamba_index += 1
             elif layer.layer_type == "attention":
@@ -381,24 +433,6 @@ class NemotronHCoreAIDecode(NemotronHForCausalLM):
             hidden = residual + hidden
         hidden = self.backbone.norm_f(hidden)
         return self.lm_head(hidden).to(torch.float16)
-
-    @staticmethod
-    def _update_packed_state(
-        packed_state: torch.Tensor, layer_index: int, new_state: torch.Tensor
-    ) -> None:
-        begin = torch.tensor(
-            [layer_index, *([0] * (packed_state.dim() - 1))], dtype=torch.int32
-        )
-        end = torch.tensor(
-            [layer_index + 1, *packed_state.shape[1:]], dtype=torch.int32
-        )
-        mutable_slice_update(
-            x=packed_state,
-            update=new_state.unsqueeze(0),
-            begin=begin,
-            end=end,
-        )
-
 
 def checkpoint_tensors(checkpoint: Path) -> Iterator[tuple[str, torch.Tensor]]:
     index_path = checkpoint / "model.safetensors.index.json"

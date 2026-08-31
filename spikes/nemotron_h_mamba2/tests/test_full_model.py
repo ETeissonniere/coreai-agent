@@ -86,3 +86,21 @@ def test_checkpoint_validation_rejects_missing_and_tampered_inputs(
     (tmp_path / "config.json").write_text(json.dumps({"hidden_size": 16}))
     with pytest.raises(ValueError, match="digest mismatch"):
         export_full_model.validate_checkpoint(tmp_path)
+
+
+def test_int8_recipe_preserves_sensitive_modules_and_uses_absmax_head() -> None:
+    config = export_full_model.int8_quantization_config()
+    body = config["global_config"]["op_state_spec"]["weight"]
+    head = config["module_name_configs"][r".*lm_head$"]["op_state_spec"]["weight"]
+
+    assert body["dtype"] == "int8"
+    assert body["qscheme"] == "symmetric_with_clipping"
+    assert body["granularity"] == {
+        "type": "per_block",
+        "block_size": 32,
+        "axis": 1,
+    }
+    assert head["dtype"] == "int8"
+    assert head["qscheme"] == "symmetric"
+    assert config["module_type_configs"]["torch.nn.modules.sparse.Embedding"] is None
+    assert config["module_type_configs"]["torch.nn.modules.conv.Conv1d"] is None

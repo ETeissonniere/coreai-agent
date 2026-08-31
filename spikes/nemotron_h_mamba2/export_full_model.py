@@ -12,8 +12,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
-from coreai_models.export.compiler import apply_mlir_quantization
-from coreai_models.export.macos import export_to_coreai
+from coreai_models.export.compression import quantize_pytorch_model
+from coreai_models.export import macos as macos_export
+from coreai_models.export.externalize import EXTERNALIZE_SPECS
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -22,7 +23,7 @@ from nemotron_h import NemotronHConfig, NemotronHCoreAIDecode, strict_load_check
 
 REVISION = "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f"
 MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
-ASSET_NAME = "nemotron_3_nano_4b_decode_int4"
+ASSET_NAME = "nemotron_3_nano_4b_decode_int8hu"
 PINNED_INPUT_SHA256 = {
     "config.json": "fde9241f66cd414458df444a80eb535f53aef2b4b240a91f092e651fa6f27219",
     "tokenizer.json": "623c34567aebb18582765289fbe23d901c62704d6518d71866e0e58db892b5b7",
@@ -106,6 +107,70 @@ def dynamic_shapes(max_context: int) -> dict[str, object]:
     }
 
 
+def nemotron_externalization_specs() -> list[object]:
+    """Keep only composite operations exercised by Nemotron-H."""
+    unused = {"gated_delta_update", "rope", "gather_mm"}
+    return [
+        spec
+        for spec in EXTERNALIZE_SPECS
+        if spec.composite_op_name not in unused
+    ]
+
+
+def export_nemotron_to_coreai(*args: object, **kwargs: object) -> object:
+    """Export with only the composite operations present in Nemotron-H.
+
+    The pinned Apple checkout keeps these specs in a module global rather than
+    accepting them as a public argument, so scope the override to this call.
+    """
+    original = macos_export.EXTERNALIZE_SPECS
+    macos_export.EXTERNALIZE_SPECS = nemotron_externalization_specs()
+    try:
+        return macos_export.export_to_coreai(*args, **kwargs)
+    finally:
+        macos_export.EXTERNALIZE_SPECS = original
+
+
+def int8_quantization_config() -> dict[str, object]:
+    """Selective GPU-friendly weight compression for Nemotron-H.
+
+    The recurrent/attention composites, normalization, embeddings and depthwise
+    convolution remain FP16. Linear body weights use clipped symmetric INT8;
+    the fat-tailed untied vocabulary head uses absmax symmetric INT8.
+    """
+    body_weight = {
+        "dtype": "int8",
+        "qscheme": "symmetric_with_clipping",
+        "granularity": {"type": "per_block", "block_size": 32, "axis": 1},
+    }
+    head_weight = {
+        "dtype": "int8",
+        "qscheme": "symmetric",
+        "granularity": {"type": "per_block", "block_size": 32, "axis": 1},
+    }
+    return {
+        "execution_mode": "eager",
+        "global_config": {
+            "op_state_spec": {"weight": body_weight},
+            "op_input_spec": None,
+            "op_output_spec": None,
+        },
+        "module_type_configs": {
+            "coreai_models.primitives.macos.sdpa.SDPA": None,
+            "coreai_models.primitives.macos.rms_norm.RMSNorm": None,
+            "torch.nn.modules.sparse.Embedding": None,
+            "torch.nn.modules.conv.Conv1d": None,
+        },
+        "module_name_configs": {
+            r".*lm_head$": {
+                "op_state_spec": {"weight": head_weight},
+                "op_input_spec": None,
+                "op_output_spec": None,
+            }
+        },
+    }
+
+
 def write_bundle_metadata(output: Path, checkpoint: Path, max_context: int) -> None:
     tokenizer_output = output / "tokenizer"
     tokenizer_output.mkdir(parents=True, exist_ok=True)
@@ -134,7 +199,7 @@ def write_bundle_metadata(output: Path, checkpoint: Path, max_context: int) -> N
             "hf_model_id": MODEL_ID,
             "revision": REVISION,
         },
-        "compression": "int4-symmetric-per-block-32",
+        "compression": "int8-body-clipped-head-absmax-per-block-32",
         "compilation": {
             "date": datetime.now(timezone.utc).isoformat(),
             "targets": ["macOS"],
@@ -180,7 +245,7 @@ async def export(args: argparse.Namespace) -> None:
         refs = reference_inputs(config, args.trace_cache_length, torch.bfloat16)
         print(f"[{time.strftime('%H:%M:%S')}] torch.export + Core AI conversion started")
         started = time.perf_counter()
-        program = export_to_coreai(
+        program = export_nemotron_to_coreai(
             model,
             refs,
             dynamic_shapes=dynamic_shapes(args.max_context),
@@ -206,10 +271,8 @@ async def export(args: argparse.Namespace) -> None:
         )
         del program, model, refs
         gc.collect()
-    # coreai-opt 0.2.1 cannot materialize BF16 constants as NumPy arrays for its
-    # quantizer. Keep the requested BF16 artifact, then rebuild the same graph
-    # with FP16 constants as the quantizer input. This cast is not lossless and
-    # any candidate still requires comparison with the BF16/HF reference.
+    # Quantize the PyTorch graph before Core AI export. Post-export blanket INT4
+    # compression was both slower and less accurate for this architecture.
     torch.set_default_dtype(torch.float16)
     try:
         quantization_model = NemotronHCoreAIDecode(
@@ -219,8 +282,18 @@ async def export(args: argparse.Namespace) -> None:
         torch.set_default_dtype(original_dtype)
     strict_load_checkpoint(quantization_model, checkpoint)
     quantization_refs = reference_inputs(config, args.trace_cache_length, torch.float16)
-    print(f"[{time.strftime('%H:%M:%S')}] FP16 quantization-source conversion started")
-    program = export_to_coreai(
+    print(f"[{time.strftime('%H:%M:%S')}] selective INT8 PyTorch quantization started")
+    quantization_inputs = tuple(quantization_refs.values())
+    quantization_model = quantize_pytorch_model(
+        quantization_model,
+        quantization_inputs,
+        dynamic_shapes(args.max_context),
+        int8_quantization_config(),
+        cache_seq_len=args.trace_cache_length,
+        state_indices=(2, 3, 4, 5),
+    )
+    print(f"[{time.strftime('%H:%M:%S')}] INT8 Core AI conversion started")
+    program = export_nemotron_to_coreai(
         quantization_model,
         quantization_refs,
         dynamic_shapes=dynamic_shapes(args.max_context),
@@ -229,21 +302,11 @@ async def export(args: argparse.Namespace) -> None:
         state_names=("keyCache", "valueCache", "mambaConvolution", "mambaRecurrent"),
         include_debug_info=False,
     )
-    started = time.perf_counter()
-    program = await apply_mlir_quantization(
-        program,
-        {
-            "type": "int4",
-            "symmetric": True,
-            "granularity": "per_block",
-            "block_size": 32,
-        },
-    )
-    print(f"[{time.strftime('%H:%M:%S')}] INT4 compression complete in {time.perf_counter() - started:.1f}s")
-    int4_path = output / f"{ASSET_NAME}.aimodel"
-    program.save_asset(int4_path)
+    int8_path = output / f"{ASSET_NAME}.aimodel"
+    program.optimize()
+    program.save_asset(int8_path)
     write_bundle_metadata(output, checkpoint, args.max_context)
-    paths = (int4_path,) if args.skip_bf16 else (bf16_path, int4_path)
+    paths = (int8_path,) if args.skip_bf16 else (bf16_path, int8_path)
     for path in paths:
         size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
         print(f"{path}: {size / 1e9:.3f} GB")
