@@ -34,6 +34,30 @@ import Testing
 }
 
 @MainActor
+@Test func newConversationUsesTheCurrentlySelectedModelProfile() async throws {
+    let root = try makeProfileTestRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let conversation = Conversation(modelProfile: .fast)
+    let store = JSONAppStateStore(fileURL: root.appending(path: "state.json"))
+    try store.save(PersistedAppState(
+        conversations: [conversation], folders: [], openConversationIDs: [conversation.id],
+        selectedConversationID: conversation.id
+    ))
+    let model = AppModel(
+        modelService: ProfileModelServiceStub(),
+        appStateStore: store,
+        harnessStore: JSONHarnessStore(rootURL: root.appending(path: "harness")),
+        modelResourceURLs: [.deep: root.appending(path: "deep"), .fast: root.appending(path: "fast")]
+    )
+    try await waitForProfile { model.isSelectedModelReady }
+
+    model.newConversation()
+
+    #expect(model.selectedModelProfile == .fast)
+    #expect(model.conversations.first?.modelProfile == .fast)
+}
+
+@MainActor
 @Test func deletingConversationDuringModelSwitchSettlesOnAUsableModel() async throws {
     let root = try makeProfileTestRoot()
     defer { try? FileManager.default.removeItem(at: root) }
