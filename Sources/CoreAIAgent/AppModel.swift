@@ -1573,7 +1573,6 @@ final class AppModel {
 
     private static func isDegradedToolResult(_ content: String) -> Bool {
         content.contains("<web_search_status outcome=\"temporarily_unavailable\"")
-            || content.contains("<web_search_status outcome=\"budget_exhausted\"")
     }
 
     private func persistTaskTitle(for conversationID: UUID, title: String) async {

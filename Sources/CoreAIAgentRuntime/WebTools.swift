@@ -216,7 +216,7 @@ public enum WebToolError: Error, LocalizedError, Equatable {
         case .invalidStatus(let status): "The server returned HTTP \(status)."
         case .invalidEncoding: "The response is not valid UTF-8 text."
         case .invalidQuery: "The search query is empty or too long."
-        case .toolCallLimitExceeded(let maximum): "This turn is limited to \(maximum) web searches."
+        case .toolCallLimitExceeded(let maximum): "This turn is limited to \(maximum) stateful tool calls."
         }
     }
 }
@@ -272,7 +272,6 @@ public struct WebSearchTool: Tool {
     private let provider: any WebSearching
     private let broker: ToolExecutionBroker?
     private let invocationNamespace: String
-    private let budget: ToolCallBudget?
     private let retryDelays: [Duration]
     private let requiresApproval: @Sendable () -> Bool
 
@@ -280,14 +279,12 @@ public struct WebSearchTool: Tool {
         provider: any WebSearching,
         broker: ToolExecutionBroker? = nil,
         invocationNamespace: String = "standalone",
-        budget: ToolCallBudget? = nil,
         retryDelays: [Duration] = [.milliseconds(250), .milliseconds(750)],
         requiresApproval: @escaping @Sendable () -> Bool = { true }
     ) {
         self.provider = provider
         self.broker = broker
         self.invocationNamespace = invocationNamespace
-        self.budget = budget
         self.retryDelays = retryDelays
         self.requiresApproval = requiresApproval
     }
@@ -298,11 +295,6 @@ public struct WebSearchTool: Tool {
         guard !query.isEmpty, query.count <= 500 else { throw WebToolError.invalidQuery }
         let limit = 5
         let operation: @Sendable () async throws -> String = {
-            do {
-                try await budget?.consume()
-            } catch WebToolError.toolCallLimitExceeded(let maximum) {
-                return "<web_search_status outcome=\"budget_exhausted\">The per-turn limit of \(maximum) web searches was reached. Continue using the sources already gathered, or explain that no additional search could be performed.</web_search_status>"
-            }
             return try await Self.search(
                 provider: provider,
                 query: query,
