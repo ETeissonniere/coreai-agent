@@ -141,6 +141,8 @@ COREAI_CHUNK_THRESHOLD=1 swift run -c release qwen-canary \
   "Reply with exactly: Core AI is running."
 ```
 
+The equivalent command in the renamed project now uses `coreai-agent-canary`.
+
 The release build completed in 32.44 seconds, but the 18 GB model did not
 finish loading or emit a token within the bounded post-build wait, so no fresh
 Qwen throughput number is claimed. This does not affect the failed gate: the

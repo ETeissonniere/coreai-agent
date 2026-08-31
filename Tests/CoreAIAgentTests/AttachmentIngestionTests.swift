@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import QwenCoreAI
+@testable import CoreAIAgent
 
 @Suite("Attachment ingestion")
 struct AttachmentIngestionTests {

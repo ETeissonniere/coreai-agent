@@ -34,7 +34,7 @@ for script in "$repo_root"/scripts/*.sh; do sh -n "$script"; done
 grep -F 'verify-model-assets.sh" "$model_source"' "$repo_root/scripts/package-app.sh" >/dev/null
 grep -F 'verify-model-assets.sh" "$title_model_source"' "$repo_root/scripts/package-app.sh" >/dev/null
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/qwen-manifest-test.XXXXXX")"
+fixture="$(mktemp -d "${TMPDIR:-/tmp}/coreai-agent-manifest-test.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT HUP INT TERM
 printf 'trusted artifact\n' > "$fixture/model.bin"
 (CDPATH= cd -- "$fixture" && shasum -a 256 model.bin > SHA256SUMS)

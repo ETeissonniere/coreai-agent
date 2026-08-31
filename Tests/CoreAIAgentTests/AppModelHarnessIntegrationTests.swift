@@ -1,7 +1,7 @@
 import Foundation
-import QwenAgentRuntime
+import CoreAIAgentRuntime
 import Testing
-@testable import QwenCoreAI
+@testable import CoreAIAgent
 
 @MainActor @Test func titleGenerationReplacesImmediateFallbackOnSuccess() async throws {
     let root = temporaryHarnessDirectory()
@@ -646,5 +646,5 @@ private enum HarnessIntegrationTestError: Error {
 
 private func temporaryHarnessDirectory() -> URL {
     FileManager.default.temporaryDirectory
-        .appending(path: "QwenCoreAI-AppModelHarnessTests-\(UUID())", directoryHint: .isDirectory)
+        .appending(path: "CoreAIAgent-AppModelHarnessTests-\(UUID())", directoryHint: .isDirectory)
 }

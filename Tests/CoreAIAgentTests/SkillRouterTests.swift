@@ -1,6 +1,6 @@
 import Testing
-@testable import QwenCoreAI
-import QwenAgentRuntime
+@testable import CoreAIAgent
+import CoreAIAgentRuntime
 
 private let routingSkills = [
     AgentSkillMetadata(

@@ -1,6 +1,6 @@
 import Foundation
 import FoundationModels
-import QwenAgentRuntime
+import CoreAIAgentRuntime
 import Testing
 
 @Test func toolIdentityScopesReusedOpaqueIDsByGenerationAttempt() {

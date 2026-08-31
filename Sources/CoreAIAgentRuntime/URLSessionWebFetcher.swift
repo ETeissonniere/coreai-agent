@@ -29,7 +29,7 @@ public struct URLSessionWebFetcher: WebFetching, Sendable {
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "GET"
         request.setValue(allowedMIMETypes.sorted().joined(separator: ", "), forHTTPHeaderField: "Accept")
-        request.setValue("QwenCoreAI/1", forHTTPHeaderField: "User-Agent")
+        request.setValue("CoreAIAgent/1", forHTTPHeaderField: "User-Agent")
         let (bytes, response) = try await session.bytes(for: request)
         try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse else { throw WebToolError.invalidStatus(0) }

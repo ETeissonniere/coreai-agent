@@ -1,5 +1,5 @@
 import Foundation
-import QwenAgentRuntime
+import CoreAIAgentRuntime
 
 struct SkillRoutingResult: Equatable {
     let prompt: String

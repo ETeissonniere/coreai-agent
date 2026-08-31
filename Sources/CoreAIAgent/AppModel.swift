@@ -1,6 +1,6 @@
 import Foundation
 import Observation
-import QwenAgentRuntime
+import CoreAIAgentRuntime
 import CryptoKit
 import AppKit
 
@@ -297,6 +297,13 @@ final class AppModel {
                 resolvedAt: resolvedAt
             ) else { return }
             approvalsByConversation[conversationID]?[index].decision = decision
+            let approved = decision != .denied
+            await persistApprovalOutcomeStatus(
+                approvalID,
+                in: conversationID,
+                shouldRun: approved,
+                timestamp: resolvedAt
+            )
             let accepted = await modelService.resolveApproval(id: approvalID, approved: decision != .denied)
             if let invocationID = approvalInvocationIDs[approvalID],
                let activity = toolActivitiesByConversation[conversationID]?
@@ -322,12 +329,14 @@ final class AppModel {
                     )
                 }
             }
-            await persistApprovalOutcomeStatus(
-                approvalID,
-                in: conversationID,
-                shouldRun: accepted && decision != .denied,
-                timestamp: resolvedAt
-            )
+            if approved && !accepted {
+                await persistApprovalOutcomeStatus(
+                    approvalID,
+                    in: conversationID,
+                    shouldRun: false,
+                    timestamp: resolvedAt
+                )
+            }
             if !accepted {
                 persistenceRecoveryNotice = "The permission decision was saved, but its original run is no longer active. No external action was started."
             }

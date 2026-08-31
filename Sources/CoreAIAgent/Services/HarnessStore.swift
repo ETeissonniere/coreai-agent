@@ -647,13 +647,20 @@ actor JSONHarnessStore: HarnessStoring {
     }
 
     private static var defaultRootURL: URL {
-        let applicationSupport = FileManager.default.urls(
+        applicationSupportDirectory()
+            .appending(path: "AgentHarness", directoryHint: .isDirectory)
+    }
+
+    private static func applicationSupportDirectory() -> URL {
+        let fileManager = FileManager.default
+        let applicationSupport = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first!
-        return applicationSupport
-            .appending(path: "Qwen Core AI", directoryHint: .isDirectory)
-            .appending(path: "AgentHarness", directoryHint: .isDirectory)
+        return ApplicationSupportLocation.resolve(
+            in: applicationSupport,
+            fileManager: fileManager
+        )
     }
 
     private static func checkpointSequence(from fileURL: URL) -> Int {

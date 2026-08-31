@@ -5,13 +5,13 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>QwenCoreAI</string>
+    <string>CoreAIAgent</string>
     <key>CFBundleIdentifier</key>
-    <string>com.eliottteissonniere.QwenCoreAI</string>
+    <string>com.eliottteissonniere.CoreAIAgent</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Qwen Core AI</string>
+    <string>CoreAI Agent</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

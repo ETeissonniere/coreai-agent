@@ -1,5 +1,5 @@
 import Testing
-@testable import QwenCoreAI
+@testable import CoreAIAgent
 
 @Test func conversationScrollFollowsWhileContentGrowsAtTheBottom() {
     var state = ConversationScrollState()

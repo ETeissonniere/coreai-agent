@@ -1,5 +1,5 @@
 import Foundation
-import QwenAgentRuntime
+import CoreAIAgentRuntime
 
 protocol ModelServing: AnyObject, Sendable {
     func load(resourcesAt url: URL) async throws

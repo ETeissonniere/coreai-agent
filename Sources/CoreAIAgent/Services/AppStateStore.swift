@@ -97,13 +97,20 @@ struct JSONAppStateStore: AppStateStoring, Sendable {
     }
 
     private static var defaultFileURL: URL {
-        let applicationSupport = FileManager.default.urls(
+        applicationSupportDirectory()
+            .appending(path: "AppState.json", directoryHint: .notDirectory)
+    }
+
+    private static func applicationSupportDirectory() -> URL {
+        let fileManager = FileManager.default
+        let applicationSupport = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first!
-        return applicationSupport
-            .appending(path: "Qwen Core AI", directoryHint: .isDirectory)
-            .appending(path: "AppState.json", directoryHint: .notDirectory)
+        return ApplicationSupportLocation.resolve(
+            in: applicationSupport,
+            fileManager: fileManager
+        )
     }
 }
 

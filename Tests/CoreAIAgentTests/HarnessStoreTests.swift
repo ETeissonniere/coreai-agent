@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import QwenCoreAI
+@testable import CoreAIAgent
 
 @Test func harnessStoreAppendsTypedEventsAndDeduplicatesIdempotencyKeys() async throws {
     let root = temporaryDirectory()
@@ -370,5 +370,5 @@ import Testing
 
 private func temporaryDirectory() -> URL {
     FileManager.default.temporaryDirectory
-        .appending(path: "QwenCoreAI-HarnessTests-\(UUID())", directoryHint: .isDirectory)
+        .appending(path: "CoreAIAgent-HarnessTests-\(UUID())", directoryHint: .isDirectory)
 }

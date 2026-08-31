@@ -1,14 +1,14 @@
-# Qwen Core AI
+# CoreAI Agent
 
-Qwen Core AI is a vibe-coded exploration of Apple’s Core AI and Swift APIs. It bundles local Deep and Fast models inside a native macOS app and explores what basic, private agentic workflows can feel like when inference, conversations, tools, and runtime telemetry all live on the Mac.
+CoreAI Agent is a vibe-coded exploration of Apple’s Core AI and Swift APIs. It bundles local Deep and Fast models inside a native macOS app and explores what basic, private agentic workflows can feel like when inference, conversations, tools, and runtime telemetry all live on the Mac.
 
-![Qwen Core AI performing web research with live context and KV-cache telemetry](docs/images/context-and-tools.png)
+![CoreAI Agent performing web research with live context and KV-cache telemetry](docs/images/context-and-tools.png)
 
 > Reasoning, tool activity, retained-context composition, and KV-cache usage remain visible while the agent works.
 
 The app includes persistent conversations and workspaces, streamed reasoning and Markdown responses, automatic skill discovery, approval-gated web search, document artifacts, context compaction, and performance statistics.
 
-![Qwen Core AI presenting a researched response with citations](docs/images/researched-response.png)
+![CoreAI Agent presenting a researched response with citations](docs/images/researched-response.png)
 
 ## Requirements
 
@@ -26,7 +26,7 @@ Clone the repository, fetch the small title model through Git LFS, and download 
 
 ```sh
 git clone <repository-url>
-cd qwen-coreai
+cd coreai-agent
 git lfs install
 git lfs pull
 uv tool install huggingface-hub
@@ -41,7 +41,7 @@ Verify the toolchain, run the tests, and package the app:
 make preflight
 make test
 make package
-open "dist/Qwen Core AI.app"
+open "dist/CoreAI Agent.app"
 ```
 
 The inference models are hosted outside GitHub because their compiled payloads exceed this repository's Git LFS per-object limit. `make package` performs a release build and embeds the Deep, Fast, and title models in the application bundle. Once packaged, the app performs no model download; Fast/Deep selection only chooses between bundled Core AI resources.
@@ -52,4 +52,6 @@ See [COREAI.md](COREAI.md) for model provenance, reproducible export commands, a
 
 ## Experimental status
 
-This is an exploration, not a production assistant. It targets beta Apple APIs and tooling; the pinned 27B artifact currently has a 4,096-token context window; web search requires approval before a query leaves the Mac; and the generated app is intended for local development rather than distribution—it is not signed or notarized.
+This is an exploration, not a production assistant. It targets beta Apple APIs and tooling; the pinned 27B artifact currently has a 4,096-token context window; web search requires approval before a query leaves the Mac; and the generated app is intended for local development rather than distribution—it is ad hoc signed for local use, not Developer ID signed or notarized.
+
+CoreAI Agent is an independent project and is not affiliated with, endorsed by, or sponsored by Apple Inc. Apple is a trademark of Apple Inc.; references to Core AI describe the Apple technologies explored by this project.

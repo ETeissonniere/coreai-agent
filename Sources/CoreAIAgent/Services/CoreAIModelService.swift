@@ -1,7 +1,7 @@
 import CoreAILanguageModels
 import Foundation
 import FoundationModels
-import QwenAgentRuntime
+import CoreAIAgentRuntime
 
 actor LifecycleForwardingState {
     private var forwardedCount: Int

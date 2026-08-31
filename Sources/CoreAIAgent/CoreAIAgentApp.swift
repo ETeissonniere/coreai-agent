@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @main
-struct QwenCoreAIApp: App {
+struct CoreAIAgentApp: App {
     @State private var model = AppModel()
     @Environment(\.scenePhase) private var scenePhase
 

@@ -1,7 +1,7 @@
 import CoreAILanguageModels
 import Foundation
 import FoundationModels
-import QwenAgentRuntime
+import CoreAIAgentRuntime
 
 if ProcessInfo.processInfo.environment["COREAI_VERBOSE"] == "1" {
     CLILogger.setLevel(to: 2)
@@ -20,7 +20,7 @@ let positionalArguments = agentToolMode
 
 guard let bundlePath = positionalArguments.first else {
     FileHandle.standardError.write(Data(
-        "usage: qwen-canary [--agent-tool] /path/to/model-bundle [prompt]\n".utf8
+        "usage: coreai-agent-canary [--agent-tool] /path/to/model-bundle [prompt]\n".utf8
     ))
     exit(2)
 }

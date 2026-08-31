@@ -11,7 +11,7 @@ fi
 # executable there reflects the current sources.
 swift build -c release
 binary_dir="$(swift build -c release --show-bin-path)"
-app_dir="$repo_root/dist/Qwen Core AI.app"
+app_dir="$repo_root/dist/CoreAI Agent.app"
 contents="$app_dir/Contents"
 model_source="$repo_root/Models/Qwen3.8-27B-CoreAI"
 model_100k_source="$repo_root/Models/Qwen3.8-27B-CoreAI-100K"
@@ -31,8 +31,9 @@ if [ ! -f "$model_source/gpu-pipelined/qwen3_8_27b_decode_int4lin/metadata.json"
 fi
 "$repo_root/scripts/verify-model-assets.sh" "$model_source"
 
+rm -rf "$app_dir"
 mkdir -p "$contents/MacOS" "$contents/Resources"
-cp "$binary_dir/QwenCoreAI" "$contents/MacOS/QwenCoreAI"
+cp "$binary_dir/CoreAIAgent" "$contents/MacOS/CoreAIAgent"
 cp "$repo_root/Packaging/Info.plist" "$contents/Info.plist"
 mkdir -p "$contents/Resources/Models"
 rm -rf "$model_destination"

@@ -23,7 +23,7 @@ import Testing
     #expect(retry.hasSuffix("/no_think"))
     #expect(!retry.contains("(request.prompt)"))
 }
-@testable import QwenCoreAI
+@testable import CoreAIAgent
 
 @Test func conversationStartsEmpty() {
     let conversation = Conversation()

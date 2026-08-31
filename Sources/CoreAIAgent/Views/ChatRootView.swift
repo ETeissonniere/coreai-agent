@@ -25,7 +25,7 @@ struct ChatRootView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .navigationTitle(selectedConversation?.title ?? "Qwen")
+            .navigationTitle(selectedConversation?.title ?? "CoreAI Agent")
             .toolbar {
                 ToolbarItem {
                     Button("Task Inspector", systemImage: "sidebar.trailing") { model.showInspector.toggle() }

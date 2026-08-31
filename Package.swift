@@ -3,37 +3,37 @@
 import PackageDescription
 
 let package = Package(
-    name: "QwenCoreAI",
+    name: "CoreAIAgent",
     platforms: [.macOS("27.0")],
     products: [
-        .library(name: "QwenAgentRuntime", targets: ["QwenAgentRuntime"]),
-        .executable(name: "QwenCoreAI", targets: ["QwenCoreAI"]),
-        .executable(name: "qwen-canary", targets: ["QwenCoreAICanary"])
+        .library(name: "CoreAIAgentRuntime", targets: ["CoreAIAgentRuntime"]),
+        .executable(name: "CoreAIAgent", targets: ["CoreAIAgent"]),
+        .executable(name: "coreai-agent-canary", targets: ["CoreAIAgentCanary"])
     ],
     dependencies: [
         .package(path: "Vendor/coreai-models")
     ],
     targets: [
-        .target(name: "QwenAgentRuntime"),
+        .target(name: "CoreAIAgentRuntime"),
         .executableTarget(
-            name: "QwenCoreAI",
+            name: "CoreAIAgent",
             dependencies: [
-                "QwenAgentRuntime",
+                "CoreAIAgentRuntime",
                 .product(name: "CoreAILM", package: "coreai-models")
             ],
             resources: [.process("Resources")],
             swiftSettings: [.enableUpcomingFeature("MemberImportVisibility")]
         ),
         .executableTarget(
-            name: "QwenCoreAICanary",
+            name: "CoreAIAgentCanary",
             dependencies: [
-                "QwenAgentRuntime",
+                "CoreAIAgentRuntime",
                 .product(name: "CoreAILM", package: "coreai-models")
             ]
         ),
         .testTarget(
-            name: "QwenCoreAITests",
-            dependencies: ["QwenCoreAI", "QwenAgentRuntime"]
+            name: "CoreAIAgentTests",
+            dependencies: ["CoreAIAgent", "CoreAIAgentRuntime"]
         )
     ]
 )

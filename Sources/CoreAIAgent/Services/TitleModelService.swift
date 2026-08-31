@@ -34,7 +34,7 @@ actor TitleModelService: TitleGenerating {
     typealias GenerationOverride = @Sendable (String) async throws -> String
 
     private static let logger = Logger(
-        subsystem: "com.eliottteissonniere.QwenCoreAI",
+        subsystem: "com.eliottteissonniere.CoreAIAgent",
         category: "TitleModel"
     )
 
