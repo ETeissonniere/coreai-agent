@@ -6,6 +6,8 @@
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>CoreAIAgent</string>
+    <key>CFBundleIconFile</key>
+    <string>CoreAIAgent.icns</string>
     <key>CFBundleIdentifier</key>
     <string>com.eliottteissonniere.CoreAIAgent</string>
     <key>CFBundleInfoDictionaryVersion</key>

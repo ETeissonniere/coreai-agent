@@ -20,6 +20,7 @@ title_model_source="$repo_root/Models/TitleModel"
 title_model_destination="$contents/Resources/Models/TitleModel"
 nemotron_model_source="$repo_root/Models/Nemotron-3-Nano-4B-CoreAI"
 nemotron_model_destination="$contents/Resources/Models/Nemotron-3-Nano-4B-CoreAI"
+icon_source="$repo_root/Packaging/CoreAIAgent.icns"
 . "$repo_root/scripts/model-sources.env"
 
 if [ -f "$model_100k_source/gpu-pipelined/qwen3_8_27b_decode_int4lin/metadata.json" ]; then
@@ -35,6 +36,7 @@ rm -rf "$app_dir"
 mkdir -p "$contents/MacOS" "$contents/Resources"
 cp "$binary_dir/CoreAIAgent" "$contents/MacOS/CoreAIAgent"
 cp "$repo_root/Packaging/Info.plist" "$contents/Info.plist"
+cp "$icon_source" "$contents/Resources/CoreAIAgent.icns"
 mkdir -p "$contents/Resources/Models"
 rm -rf "$model_destination"
 if ! cp -cR "$model_source" "$model_destination" 2>/dev/null; then
