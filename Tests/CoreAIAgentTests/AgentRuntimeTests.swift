@@ -273,6 +273,23 @@ import Testing
     #expect(await provider.callCount == 0)
 }
 
+@Test func webSearchCanRunWithoutPerQueryApprovalWhenUserAllowsIt() async throws {
+    let provider = CountingSearchProvider()
+    let journal = AgentEventJournal()
+    let broker = ToolExecutionBroker(journal: journal)
+    let tool = WebSearchTool(
+        provider: provider,
+        broker: broker,
+        invocationNamespace: "turn-with-default-permission",
+        requiresApproval: { false }
+    )
+
+    _ = try await tool.call(arguments: WebSearchArguments(query: "approved by default"))
+
+    #expect(await provider.callCount == 1)
+    #expect(await journal.snapshot().isEmpty)
+}
+
 @Test func webSearchAllowOnceRequiresApprovalForEachInvocation() async throws {
     let provider = CountingSearchProvider()
     let journal = AgentEventJournal()

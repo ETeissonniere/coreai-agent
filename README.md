@@ -6,7 +6,7 @@ CoreAI Agent is a vibe-coded exploration of Apple’s Core AI and Swift APIs. It
 
 > Reasoning, tool activity, retained-context composition, and KV-cache usage remain visible while the agent works.
 
-The app includes persistent conversations and workspaces, streamed reasoning and Markdown responses, automatic skill discovery, approval-gated web search, document artifacts, context compaction, and performance statistics.
+The app includes persistent conversations and workspaces, streamed reasoning and Markdown responses, automatic skill discovery, configurable web-search approval, document artifacts, context compaction, and performance statistics.
 
 ![CoreAI Agent presenting a researched response with citations](docs/images/researched-response.png)
 
@@ -52,6 +52,6 @@ See [COREAI.md](COREAI.md) for model provenance, reproducible export commands, a
 
 ## Experimental status
 
-This is an exploration, not a production assistant. It targets beta Apple APIs and tooling; the pinned 27B artifact currently has a 4,096-token context window; web search requires approval before a query leaves the Mac; and the generated app is intended for local development rather than distribution—it is ad hoc signed for local use, not Developer ID signed or notarized.
+This is an exploration, not a production assistant. It targets beta Apple APIs and tooling; the pinned 27B artifact currently has a 4,096-token context window; web search asks for approval before a query leaves the Mac unless the user explicitly allows searches by default in Settings; and the generated app is intended for local development rather than distribution—it is ad hoc signed for local use, not Developer ID signed or notarized.
 
 CoreAI Agent is an independent project and is not affiliated with, endorsed by, or sponsored by Apple Inc. Apple is a trademark of Apple Inc.; references to Core AI describe the Apple technologies explored by this project.

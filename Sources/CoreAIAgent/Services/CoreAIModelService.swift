@@ -562,7 +562,8 @@ actor CoreAIModelService: ModelServing {
                 provider: webSearchProvider,
                 broker: broker,
                 invocationNamespace: invocationNamespace,
-                budget: budget
+                budget: budget,
+                requiresApproval: { !AppPreferences.allowsWebSearchByDefault }
             ))
         }
         // Arbitrary URL fetch remains unavailable until requests are routed

@@ -274,19 +274,22 @@ public struct WebSearchTool: Tool {
     private let invocationNamespace: String
     private let budget: ToolCallBudget?
     private let retryDelays: [Duration]
+    private let requiresApproval: @Sendable () -> Bool
 
     public init(
         provider: any WebSearching,
         broker: ToolExecutionBroker? = nil,
         invocationNamespace: String = "standalone",
         budget: ToolCallBudget? = nil,
-        retryDelays: [Duration] = [.milliseconds(250), .milliseconds(750)]
+        retryDelays: [Duration] = [.milliseconds(250), .milliseconds(750)],
+        requiresApproval: @escaping @Sendable () -> Bool = { true }
     ) {
         self.provider = provider
         self.broker = broker
         self.invocationNamespace = invocationNamespace
         self.budget = budget
         self.retryDelays = retryDelays
+        self.requiresApproval = requiresApproval
     }
 
     public func call(arguments: WebSearchArguments) async throws -> String {
@@ -307,7 +310,7 @@ public struct WebSearchTool: Tool {
                 retryDelays: retryDelays
             )
         }
-        if let broker {
+        if let broker, requiresApproval() {
             let operationKey = "web-search:\(invocationNamespace):\(Self.stableHash("\(query)\u{1f}\(limit)"))"
             let toolCallID = await broker.claimInvocation(toolName: name) ?? UUID().uuidString
             let key = "\(operationKey):\(toolCallID)"
