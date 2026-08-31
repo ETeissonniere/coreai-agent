@@ -18,6 +18,9 @@ model_100k_source="$repo_root/Models/Qwen3.8-27B-CoreAI-100K"
 model_destination="$contents/Resources/Models/Qwen3.8-27B-CoreAI"
 title_model_source="$repo_root/Models/TitleModel"
 title_model_destination="$contents/Resources/Models/TitleModel"
+nemotron_model_source="$repo_root/Models/Nemotron-3-Nano-4B-CoreAI"
+nemotron_model_destination="$contents/Resources/Models/Nemotron-3-Nano-4B-CoreAI"
+. "$repo_root/scripts/model-sources.env"
 
 if [ -f "$model_100k_source/gpu-pipelined/qwen3_8_27b_decode_int4lin/metadata.json" ]; then
     model_source="$model_100k_source"
@@ -45,6 +48,20 @@ rm -rf "$title_model_destination"
 if ! cp -cR "$title_model_source" "$title_model_destination" 2>/dev/null; then
     cp -R "$title_model_source" "$title_model_destination"
 fi
+
+"$repo_root/scripts/verify-nemotron-package-source.sh" \
+    "$nemotron_model_source" \
+    "$NEMOTRON_COREAI_MODEL_SHA256" \
+    "$NEMOTRON_MODEL_REVISION"
+rm -rf "$nemotron_model_destination"
+if ! cp -cR "$nemotron_model_source" "$nemotron_model_destination" 2>/dev/null; then
+    cp -R "$nemotron_model_source" "$nemotron_model_destination"
+fi
+
+for legal_directory in ThirdPartyLicenses ThirdPartyNotices ModelProvenance; do
+    rm -rf "$contents/Resources/$legal_directory"
+    cp -R "$repo_root/Packaging/$legal_directory" "$contents/Resources/$legal_directory"
+done
 
 # SwiftPM applies a linker signature to the executable, but assembling an app
 # around that binary changes its signing context and adds resources that must be

@@ -35,8 +35,10 @@ struct PerformanceInspectorView: View {
         Form {
             Section("Runtime") {
                 LabeledContent("Backend", value: "Core AI")
-                LabeledContent("Model", value: "Qwen3.8 27B")
-                LabeledContent("Quantization", value: "INT4 / block 32")
+                LabeledContent("Mode", value: model.selectedModelProfile.label)
+                LabeledContent("Model", value: model.selectedModelProfile.modelName)
+                LabeledContent("Quantization", value: model.selectedModelProfile.quantization)
+                LabeledContent("Reasoning", value: model.selectedReasoningEnabled ? "On" : "Off")
                 LabeledContent("State", value: model.modelPhase.label)
             }
             Section("Latest Response") {

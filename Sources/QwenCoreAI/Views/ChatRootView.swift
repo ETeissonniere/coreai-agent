@@ -49,7 +49,8 @@ struct ChatRootView: View {
         )
         return HStack(spacing: 10) {
             Label("Local agent", systemImage: "apple.intelligence")
-            Text("Qwen3.8 27B · INT4").foregroundStyle(.secondary)
+            Text("\(conversation.modelProfile.modelName) · \(conversation.modelProfile.quantization)")
+                .foregroundStyle(.secondary)
             Label("On-device", systemImage: "lock.fill").font(.caption).foregroundStyle(.secondary)
             Spacer()
             if state == .working {

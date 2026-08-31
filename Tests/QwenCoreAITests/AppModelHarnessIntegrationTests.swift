@@ -307,9 +307,14 @@ import Testing
     ))
     let harness = JSONHarnessStore(rootURL: root.appending(path: "Harness"))
     let service = ApprovalBrokerModelServiceStub()
-    let model = AppModel(modelService: service, appStateStore: appStore, harnessStore: harness)
+    let model = AppModel(
+        modelService: service,
+        appStateStore: appStore,
+        harnessStore: harness,
+        modelResourceURLs: [.deep: root.appending(path: "deep-model")]
+    )
     await model.waitForHarnessBootstrap()
-    model.modelPhase = .ready
+    try await waitUntil { model.isSelectedModelReady }
     model.toggleSkill("builtin.web-research")
     model.draft = "Search for current Core AI documentation"
     model.send()

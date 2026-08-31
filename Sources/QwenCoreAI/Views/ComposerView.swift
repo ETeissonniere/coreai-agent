@@ -35,6 +35,14 @@ struct ComposerView: View {
                 Label("Adding files…", systemImage: "paperclip")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if modelProfilePresentation.hasWarning,
+               let notice = model.modelSelectionNotice {
+                Label(notice, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+                    .accessibilityLabel("Model warning: \(notice)")
+            }
             if !model.skillCommandSuggestions.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Invoke a skill").font(.caption).foregroundStyle(.secondary)
@@ -71,6 +79,8 @@ struct ComposerView: View {
                 .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 16))
                 .onSubmit { model.send() }
 
+                modelProfileMenu
+
                 if model.modelPhase == .loading {
                     ProgressView()
                         .controlSize(.small)
@@ -84,7 +94,7 @@ struct ComposerView: View {
                     composerButton("Start Task", systemImage: "arrow.up", action: model.send)
                         .disabled(
                             model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                || model.modelPhase != .ready || model.isAttachingFiles
+                                || !model.isSelectedModelReady || model.isAttachingFiles
                         )
                 }
             }
@@ -106,6 +116,79 @@ struct ComposerView: View {
         } isTargeted: { isDropTarget = $0 }
     }
 
+    private var modelProfileMenu: some View {
+        let presentation = modelProfilePresentation
+
+        return Menu {
+            Section("Response model") {
+                ForEach(ModelProfile.allCases, id: \.self) { profile in
+                    Button {
+                        model.selectModelProfile(profile)
+                    } label: {
+                        Label {
+                            Text(profile.label)
+                            Text("\(profile.modelName) · \(profile.quantization)")
+                        } icon: {
+                            Image(systemName: profile == model.selectedModelProfile ? "checkmark.circle.fill" : profile.systemImage)
+                        }
+                    }
+                    .disabled(!model.isModelAvailable(profile) || profile == model.selectedModelProfile)
+                }
+            }
+            if model.selectedModelProfile == .fast {
+                Section("Fast model") {
+                    Toggle("Reasoning", isOn: Binding(
+                        get: { model.selectedReasoningEnabled },
+                        set: model.setFastReasoningEnabled
+                    ))
+                }
+            }
+        } label: {
+            ViewThatFits(in: .horizontal) {
+                modelProfileLabel(presentation, showsText: true)
+                    .frame(width: 92, height: 44)
+                modelProfileLabel(presentation, showsText: false)
+                    .frame(width: 44, height: 44)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .disabled(model.modelPhase != .ready)
+        .help(presentation.help)
+        .accessibilityLabel("Response model")
+        .accessibilityValue(presentation.accessibilityValue)
+    }
+
+    private var modelProfilePresentation: ModelProfileControlPresentation {
+        ModelProfileControlPresentation(
+            profile: model.selectedModelProfile,
+            loadingProfile: model.loadingModelProfile,
+            phase: model.modelPhase,
+            isSelectedModelReady: model.isSelectedModelReady,
+            reasoningEnabled: model.selectedReasoningEnabled,
+            notice: model.modelSelectionNotice
+        )
+    }
+
+    private func modelProfileLabel(
+        _ presentation: ModelProfileControlPresentation,
+        showsText: Bool
+    ) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: presentation.systemImage)
+                .foregroundStyle(presentation.statusColor)
+            if showsText {
+                Text(presentation.label)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+    }
+
     private func composerButton(
         _ title: String,
         systemImage: String,
@@ -120,5 +203,78 @@ struct ComposerView: View {
             .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12))
             .foregroundStyle(.white)
             .accessibilityLabel(title)
+    }
+}
+
+private extension ModelProfile {
+    var systemImage: String {
+        self == .fast ? "bolt.fill" : "sparkles"
+    }
+}
+
+struct ModelProfileControlPresentation {
+    let profile: ModelProfile
+    let loadingProfile: ModelProfile?
+    let phase: ModelPhase
+    let isSelectedModelReady: Bool
+    let reasoningEnabled: Bool
+    let notice: String?
+
+    var displayedProfile: ModelProfile { loadingProfile ?? profile }
+    var label: String {
+        if hasWarning { return "\(displayedProfile.label) !" }
+        if isLoading { return "\(displayedProfile.label)…" }
+        if displayedProfile == .fast, reasoningEnabled { return "Fast · Think" }
+        return displayedProfile.label
+    }
+    var isLoading: Bool { phase == .loading }
+    var hasWarning: Bool {
+        if phase == .missing || isFailed { return true }
+        guard let notice else { return false }
+        return notice.contains("Could not load")
+            || notice.contains("not bundled")
+            || notice.contains("No bundled model")
+    }
+
+    private var isFailed: Bool {
+        if case .failed = phase { return true }
+        return false
+    }
+
+    var systemImage: String {
+        switch phase {
+        case .failed, .missing: "exclamationmark.triangle.fill"
+        case .loading: "hourglass"
+        case .ready, .generating, .compacting:
+            hasWarning ? "exclamationmark.triangle.fill" : profile.systemImage
+        }
+    }
+
+    var statusColor: Color {
+        switch phase {
+        case .failed, .missing: .orange
+        case .loading: .secondary
+        case .ready: hasWarning ? .orange : (isSelectedModelReady ? .green : .secondary)
+        case .generating, .compacting: .green
+        }
+    }
+
+    var help: String {
+        notice ?? "\(displayedProfile.modelName) · \(displayedProfile.quantization)"
+    }
+
+    var accessibilityValue: String {
+        var components = [displayedProfile.label, displayedProfile.modelName, displayedProfile.quantization]
+        if isLoading {
+            components.append("loading")
+        } else if phase == .generating || phase == .compacting || isSelectedModelReady {
+            components.append("in use")
+        } else {
+            components.append(phase.label)
+        }
+        if profile == .fast {
+            components.append(reasoningEnabled ? "reasoning on" : "reasoning off")
+        }
+        return components.joined(separator: ", ")
     }
 }

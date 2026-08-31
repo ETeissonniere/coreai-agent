@@ -5,6 +5,10 @@ dist/
 # The 27B Core AI payload contains a single 19 GB object, above GitHub LFS's
 # 2 GiB per-object limit. Fetch the pinned artifact with `make download`.
 Models/Qwen3.8-27B-CoreAI/
+# The compiled Nemotron INT8 payload is 4.6 GB, above the Git LFS per-object
+# limit for this public repository. Keep the verified local copy for packaging;
+# distribution uses the pinned external model artifact instead.
+Models/Nemotron-3-Nano-4B-CoreAI/
 Models/**/.cache/
 *.xcuserstate
 .DS_Store

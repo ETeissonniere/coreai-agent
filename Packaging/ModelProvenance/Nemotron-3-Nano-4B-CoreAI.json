@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "model": {
+    "repository": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+    "revision": "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f",
+    "bf16WeightSha256": "55d4e2519456c4a9bddf596b0748d630e3b2ce6ff6f4c2b7ed3e07e2b00dad42"
+  },
+  "conversion": {
+    "runtime": "Core AI",
+    "profile": "gpu-pipelined",
+    "compression": "int8-body-clipped-head-absmax-per-block-32",
+    "operationalContextLength": 4096,
+    "compiledAt": "2026-08-31T16:29:48.247427+00:00"
+  },
+  "artifact": {
+    "path": "Models/Nemotron-3-Nano-4B-CoreAI/gpu-pipelined/nemotron_3_nano_4b_decode_int8hu/nemotron_3_nano_4b_decode_int8hu.aimodel/main.mlirb",
+    "sha256": "d4967f627d20274ba8a06e8318f9f82e289b05c1c7e7f3b63b4c597cb35d0970"
+  },
+  "license": {
+    "name": "NVIDIA Nemotron Open Model License",
+    "version": "December 15, 2025",
+    "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/",
+    "resource": "ThirdPartyLicenses/NVIDIA-Nemotron-Open-Model-License.txt"
+  }
+}

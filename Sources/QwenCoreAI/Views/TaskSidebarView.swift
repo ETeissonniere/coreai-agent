@@ -214,7 +214,7 @@ struct TaskSidebarView: View {
         )
         let isSelected = model.selectedConversationID == conversation.id
         return Button {
-            model.selectedConversationID = conversation.id
+            model.selectConversation(conversation.id)
         } label: {
             HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {

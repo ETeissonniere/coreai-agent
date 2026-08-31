@@ -14,6 +14,10 @@ final class AppModel {
     var modelPhase: ModelPhase = .missing
     private var drafts = [UUID: String]()
     var modelURL: URL?
+    var modelSelectionNotice: String?
+    private(set) var loadingModelProfile: ModelProfile?
+    private var modelURLs = [ModelProfile: URL]()
+    private var activeModelProfile: ModelProfile?
     var showInspector = false
     var lastMetrics: GenerationMetrics?
     var contextByConversation = [UUID: ContextStatus]()
@@ -56,7 +60,8 @@ final class AppModel {
         modelService: any ModelServing = CoreAIModelService(),
         appStateStore: any AppStateStoring = JSONAppStateStore(),
         harnessStore: any HarnessStoring = JSONHarnessStore.shared,
-        titleService: (any TitleGenerating)? = nil
+        titleService: (any TitleGenerating)? = nil,
+        modelResourceURLs: [ModelProfile: URL]? = nil
     ) {
         self.modelService = modelService
         self.appStateStore = appStateStore
@@ -88,17 +93,31 @@ final class AppModel {
             selectedConversationID = conversations.first?.id
             openConversationIDs = conversations.map(\.id)
         }
-        let modelPath = "Models/Qwen3.8-27B-CoreAI/gpu-pipelined/qwen3_8_27b_decode_int4lin"
-        let candidates = [
-            Bundle.main.resourceURL?.appending(path: modelPath),
-            URL(filePath: FileManager.default.currentDirectoryPath).appending(path: modelPath),
-            Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
-                .appending(path: modelPath).standardizedFileURL,
-        ].compactMap { $0 }
-        if let localBundle = candidates.first(where: {
-            FileManager.default.fileExists(atPath: $0.appending(path: "metadata.json").path)
-        }) {
-            loadModel(from: localBundle)
+        if let modelResourceURLs {
+            modelURLs = modelResourceURLs
+        } else {
+            for profile in ModelProfile.allCases {
+                if let localBundle = Self.modelCandidates(for: profile).first(where: {
+                    FileManager.default.fileExists(atPath: $0.appending(path: "metadata.json").path)
+                }) {
+                    modelURLs[profile] = localBundle
+                }
+            }
+        }
+        let initialProfile = selectedModelProfile
+        let loadProfile = modelURLs[initialProfile] == nil
+            ? ([ModelProfile.deep, .fast].first { modelURLs[$0] != nil } ?? initialProfile)
+            : initialProfile
+        if loadProfile != initialProfile, let index = selectedIndex {
+            conversations[index].modelProfile = loadProfile
+            conversations[index].reasoningEnabled = loadProfile.defaultReasoningEnabled
+            modelSelectionNotice = "\(initialProfile.modelName) is not bundled. Using \(loadProfile.modelName)."
+            schedulePersistence()
+        }
+        if let localBundle = modelURLs[loadProfile] {
+            loadModel(from: localBundle, for: loadProfile)
+        } else {
+            modelSelectionNotice = "No bundled model is available. Run make download, then repackage the app."
         }
         harnessBootstrapTask = Task { [weak self] in
             guard let self else { return }
@@ -111,6 +130,30 @@ final class AppModel {
         guard let selectedConversationID else { return nil }
         return conversations.firstIndex { $0.id == selectedConversationID }
     }
+
+    private static func modelCandidates(for profile: ModelProfile) -> [URL] {
+        let path = profile.resourcePath
+        return [
+            Bundle.main.resourceURL?.appending(path: path),
+            URL(filePath: FileManager.default.currentDirectoryPath).appending(path: path),
+            Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+                .appending(path: path).standardizedFileURL,
+        ].compactMap { $0 }
+    }
+
+    var selectedModelProfile: ModelProfile {
+        selectedIndex.map { conversations[$0].modelProfile } ?? .deep
+    }
+
+    var selectedReasoningEnabled: Bool {
+        selectedIndex.map { conversations[$0].reasoningEnabled } ?? true
+    }
+
+    var isSelectedModelReady: Bool {
+        modelPhase == .ready && activeModelProfile == selectedModelProfile
+    }
+
+    func isModelAvailable(_ profile: ModelProfile) -> Bool { modelURLs[profile] != nil }
 
     var draft: String {
         get { selectedConversationID.flatMap { drafts[$0] } ?? "" }
@@ -302,6 +345,7 @@ final class AppModel {
         selectedConversationID = conversation.id
         draft = ""
         schedulePersistence()
+        activateSelectedModelIfNeeded()
         Task { _ = try? await ensureTask(for: conversation.id) }
     }
 
@@ -310,6 +354,7 @@ final class AppModel {
         selectedConversationID = id
         enabledSkillIDs = enabledSkillIDsByConversation[id] ?? []
         schedulePersistence()
+        activateSelectedModelIfNeeded()
     }
 
     /// Restores the last request to the composer so a failed response can be
@@ -340,6 +385,7 @@ final class AppModel {
                 : openConversationIDs.last
         }
         schedulePersistence()
+        activateSelectedModelIfNeeded()
     }
 
     func deleteConversation(_ id: UUID) {
@@ -383,6 +429,7 @@ final class AppModel {
             enabledSkillIDs = selectedConversationID.flatMap { enabledSkillIDsByConversation[$0] } ?? []
         }
         schedulePersistence()
+        activateSelectedModelIfNeeded()
         if let taskID {
             Task { try? await harnessStore.deleteTask(taskID) }
         }
@@ -451,17 +498,101 @@ final class AppModel {
         return remainder
     }
 
-    func loadModel(from url: URL) {
+    func loadModel(from url: URL, for profile: ModelProfile = .deep) {
+        let previousProfile = activeModelProfile
+        let previousURL = modelURL
         modelURL = url
+        loadingModelProfile = profile
         modelPhase = .loading
         Task {
             do {
-                try await modelService.load(resourcesAt: url)
+                try await modelService.load(resourcesAt: url, for: profile)
+                activeModelProfile = profile
+                loadingModelProfile = nil
                 modelPhase = .ready
+                activateSelectedModelIfNeeded()
             } catch {
-                modelPhase = .failed(error.localizedDescription)
+                loadingModelProfile = nil
+                activeModelProfile = previousProfile
+                modelURL = previousURL
+                if let previousProfile {
+                    if let index = selectedIndex, conversations[index].modelProfile == profile {
+                        conversations[index].modelProfile = previousProfile
+                        conversations[index].reasoningEnabled = previousProfile.defaultReasoningEnabled
+                        conversations[index].updatedAt = .now
+                        schedulePersistence()
+                    }
+                    modelPhase = .ready
+                    modelSelectionNotice = "Could not load \(profile.modelName): \(error.localizedDescription)"
+                } else {
+                    modelPhase = .failed(error.localizedDescription)
+                }
             }
         }
+    }
+
+    func selectModelProfile(_ profile: ModelProfile) {
+        guard profile != selectedModelProfile, modelPhase == .ready,
+              let index = selectedIndex else { return }
+        guard let url = modelURLs[profile] else {
+            modelSelectionNotice = "\(profile.modelName) is not bundled in this build."
+            return
+        }
+        let conversationID = conversations[index].id
+        loadingModelProfile = profile
+        modelPhase = .loading
+        modelSelectionNotice = "Loading \(profile.modelName)…"
+        Task {
+            do {
+                try await modelService.load(resourcesAt: url, for: profile)
+                activeModelProfile = profile
+                modelURL = url
+                loadingModelProfile = nil
+                modelPhase = .ready
+                guard let currentIndex = conversations.firstIndex(where: { $0.id == conversationID }) else {
+                    modelSelectionNotice = nil
+                    activateSelectedModelIfNeeded()
+                    return
+                }
+                conversations[currentIndex].modelProfile = profile
+                conversations[currentIndex].reasoningEnabled = profile.defaultReasoningEnabled
+                conversations[currentIndex].updatedAt = .now
+                modelSelectionNotice = "\(profile.modelName) is ready. Existing turns will be re-prefilled."
+                schedulePersistence()
+                if selectedConversationID != conversationID {
+                    activateSelectedModelIfNeeded()
+                }
+            } catch {
+                loadingModelProfile = nil
+                modelPhase = activeModelProfile == nil ? .failed(error.localizedDescription) : .ready
+                modelSelectionNotice = "Could not load \(profile.modelName): \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func setFastReasoningEnabled(_ enabled: Bool) {
+        guard selectedModelProfile == .fast, let index = selectedIndex else { return }
+        conversations[index].reasoningEnabled = enabled
+        conversations[index].updatedAt = .now
+        schedulePersistence()
+    }
+
+    private func activateSelectedModelIfNeeded() {
+        let profile = selectedModelProfile
+        guard activeModelProfile != profile, modelPhase == .ready else { return }
+        guard let url = modelURLs[profile] else {
+            guard let activeModelProfile, let index = selectedIndex else {
+                modelPhase = .missing
+                modelSelectionNotice = "\(profile.modelName) is not bundled in this build."
+                return
+            }
+            conversations[index].modelProfile = activeModelProfile
+            conversations[index].reasoningEnabled = activeModelProfile.defaultReasoningEnabled
+            modelSelectionNotice = "\(profile.modelName) is not bundled. Using \(activeModelProfile.modelName)."
+            schedulePersistence()
+            return
+        }
+        loadModel(from: url, for: profile)
     }
 
     func send() {
@@ -470,7 +601,7 @@ final class AppModel {
         let pinnedSkills = selectedID.flatMap { enabledSkillIDsByConversation[$0] } ?? enabledSkillIDs
         let routing = SkillRouter().route(rawPrompt, availableSkills: availableSkills, pinnedSkillIDs: pinnedSkills)
         let prompt = routing.prompt
-        guard !prompt.isEmpty, modelPhase == .ready, !isAttachingFiles,
+        guard !prompt.isEmpty, isSelectedModelReady, !isAttachingFiles,
               let index = selectedIndex else { return }
 
         let attachments = draftAttachments
@@ -491,6 +622,8 @@ final class AppModel {
         conversations[index].updatedAt = .now
         schedulePersistence()
         let conversationID = conversations[index].id
+        let generationProfile = conversations[index].modelProfile
+        let generationReasoningEnabled = conversations[index].reasoningEnabled
         recoveredConversationIDs.remove(conversationID)
         let responseID = conversations[index].messages.last!.id
         let selectedSkillIDs = Set(routing.selectedSkillIDs.map(Self.canonicalSkillID))
@@ -561,7 +694,9 @@ final class AppModel {
                         ContextPromptComponent(category: .systemAndMemory, text: skillContext),
                         ContextPromptComponent(category: .attachments, text: attachmentContext),
                         ContextPromptComponent(id: userMessage.id, category: .user, text: requestEnvelope),
-                    ]
+                    ],
+                    modelProfile: generationProfile,
+                    reasoningEnabled: generationReasoningEnabled
                 )
                 for try await event in modelService.generate(request: request) {
                     guard !Task.isCancelled else { break }
@@ -808,6 +943,7 @@ final class AppModel {
                 generatingConversationID = nil
                 generatingResponseID = nil
                 modelPhase = .ready
+                activateSelectedModelIfNeeded()
                 // Persist final runtime telemetry with the assistant turn so
                 // context/KV history survives a normal relaunch.
                 schedulePersistence()
@@ -848,6 +984,7 @@ final class AppModel {
                 generatingConversationID = nil
                 generatingResponseID = nil
                 modelPhase = .ready
+                activateSelectedModelIfNeeded()
                 if let runID = runIDByConversation[conversationID] {
                     _ = try? await harnessStore.append(
                         .failed(message: error.localizedDescription, retryable: true),
@@ -899,6 +1036,7 @@ final class AppModel {
             }
         }
         modelPhase = .ready
+        activateSelectedModelIfNeeded()
     }
 
     private func updateMessage(_ id: UUID, in conversationID: UUID, update: (inout ChatMessage) -> Void) {

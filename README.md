@@ -1,6 +1,6 @@
 # Qwen Core AI
 
-Qwen Core AI is a vibe-coded exploration of Apple’s Core AI and Swift APIs. It bundles a local Qwen3.8 27B INT4 model inside a native macOS app and explores what basic, private agentic workflows can feel like when inference, conversations, tools, and runtime telemetry all live on the Mac.
+Qwen Core AI is a vibe-coded exploration of Apple’s Core AI and Swift APIs. It bundles local Deep and Fast models inside a native macOS app and explores what basic, private agentic workflows can feel like when inference, conversations, tools, and runtime telemetry all live on the Mac.
 
 ![Qwen Core AI performing web research with live context and KV-cache telemetry](docs/images/context-and-tools.png)
 
@@ -16,13 +16,13 @@ The app includes persistent conversations and workspaces, streamed reasoning and
 - macOS 27 and Xcode 27 or newer
 - Git LFS
 - [UV](https://docs.astral.sh/uv/) for installing the Hugging Face CLI
-- About 40 GB of free disk space for the model checkout and packaged app
+- About 50 GB of free disk space for the model checkout and packaged app
 
-The bundled assets are an approximately 19 GB Qwen3.8 27B INT4 model and a smaller Qwen3 0.6B INT4 model used to generate conversation titles.
+Deep mode uses an approximately 19 GB Qwen3.8 27B INT4 model. Fast mode uses NVIDIA Nemotron 3 Nano 4B with a native 4.6 GB Core AI INT8 conversion; reasoning is off by default and can be enabled from the mode menu. A smaller Qwen3 0.6B INT4 model generates conversation titles. Model choice is saved per conversation and can be changed mid-session; the next turn re-prefills the visible conversation with the selected model.
 
 ## Build and run
 
-Clone the repository, fetch the small title model through Git LFS, and download the pinned 27B Core AI artifact from Hugging Face:
+Clone the repository, fetch the small title model through Git LFS, and download the pinned Deep and Fast Core AI artifacts from Hugging Face:
 
 ```sh
 git clone <repository-url>
@@ -44,7 +44,9 @@ make package
 open "dist/Qwen Core AI.app"
 ```
 
-The 27B model is hosted outside GitHub because its compiled payload is a single 19 GB object, above GitHub LFS's per-object limit. `make package` performs a release build and embeds both models in the application bundle. Once packaged, the app does not download or ask you to select a model.
+The inference models are hosted outside GitHub because their compiled payloads exceed this repository's Git LFS per-object limit. `make package` performs a release build and embeds the Deep, Fast, and title models in the application bundle. Once packaged, the app performs no model download; Fast/Deep selection only chooses between bundled Core AI resources.
+
+The Nemotron conversion is published at [`ETeissonniere/Nemotron-3-Nano-4B-CoreAI`](https://huggingface.co/ETeissonniere/Nemotron-3-Nano-4B-CoreAI) under the NVIDIA Nemotron Open Model License. See [the redistribution and provenance notes](docs/Nemotron-Model-Redistribution.md) before distributing a build.
 
 See [COREAI.md](COREAI.md) for model provenance, reproducible export commands, and details about the local Core AI runtime adaptation.
 

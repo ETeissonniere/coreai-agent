@@ -3,6 +3,7 @@ import QwenAgentRuntime
 
 protocol ModelServing: AnyObject, Sendable {
     func load(resourcesAt url: URL) async throws
+    func load(resourcesAt url: URL, for profile: ModelProfile) async throws
     func generate(conversationID: UUID, prompt: String) -> AsyncThrowingStream<GenerationEvent, Error>
     func generate(
         conversationID: UUID,
@@ -12,6 +13,12 @@ protocol ModelServing: AnyObject, Sendable {
     func generate(request: ModelGenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error>
     func cancel() async
     func resolveApproval(id: UUID, approved: Bool) async -> Bool
+}
+
+extension ModelServing {
+    func load(resourcesAt url: URL, for profile: ModelProfile) async throws {
+        try await load(resourcesAt: url)
+    }
 }
 
 enum GenerationEvent: Sendable {
@@ -34,6 +41,8 @@ struct ModelGenerationRequest: Sendable {
     /// Semantic pieces of the current prompt. Counts for these pieces are
     /// tokenizer-based estimates; the runtime only publishes aggregate input usage.
     var promptComponents: [ContextPromptComponent]
+    var modelProfile: ModelProfile
+    var reasoningEnabled: Bool
 
     init(
         conversationID: UUID,
@@ -43,7 +52,9 @@ struct ModelGenerationRequest: Sendable {
         compaction: ModelCompactionSnapshot?,
         userMessageID: UUID? = nil,
         assistantMessageID: UUID? = nil,
-        promptComponents: [ContextPromptComponent] = []
+        promptComponents: [ContextPromptComponent] = [],
+        modelProfile: ModelProfile = .deep,
+        reasoningEnabled: Bool = true
     ) {
         self.conversationID = conversationID
         self.prompt = prompt
@@ -53,6 +64,8 @@ struct ModelGenerationRequest: Sendable {
         self.userMessageID = userMessageID
         self.assistantMessageID = assistantMessageID
         self.promptComponents = promptComponents
+        self.modelProfile = modelProfile
+        self.reasoningEnabled = reasoningEnabled
     }
 }
 

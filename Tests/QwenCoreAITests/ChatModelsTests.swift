@@ -45,6 +45,35 @@ import Testing
     #expect(metrics.contextTokens == 140)
 }
 
+@Test func modelProfilesExposeTheAcceptedRuntimeMetadata() {
+    #expect(ModelProfile.fast.modelName == "Nemotron 3 Nano 4B")
+    #expect(ModelProfile.fast.quantization == "INT8")
+    #expect(ModelProfile.fast.defaultReasoningEnabled == false)
+    #expect(ModelProfile.deep.modelName == "Qwen3.8 27B")
+    #expect(ModelProfile.deep.quantization == "INT4")
+    #expect(ModelProfile.deep.defaultReasoningEnabled)
+}
+
+@Test func conversationModelProfileAndReasoningPreferenceRoundTrip() throws {
+    let conversation = Conversation(modelProfile: .fast, reasoningEnabled: true)
+    let restored = try JSONDecoder().decode(
+        Conversation.self,
+        from: JSONEncoder().encode(conversation)
+    )
+    #expect(restored.modelProfile == .fast)
+    #expect(restored.reasoningEnabled)
+}
+
+@Test func legacyConversationDefaultsToDeepProfile() throws {
+    let id = UUID()
+    let json = """
+    {"id":"\(id.uuidString)","title":"Legacy","messages":[],"isPinned":false,"updatedAt":0}
+    """
+    let restored = try JSONDecoder().decode(Conversation.self, from: Data(json.utf8))
+    #expect(restored.modelProfile == .deep)
+    #expect(restored.reasoningEnabled)
+}
+
 @Test func stoppedMessageRoundTripsThroughJSON() throws {
     let message = ChatMessage(
         role: .assistant,

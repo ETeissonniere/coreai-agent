@@ -43,5 +43,8 @@ struct QwenCoreAIApp: App {
                     .keyboardShortcut("i", modifiers: [.command, .option])
             }
         }
+        Settings {
+            AcknowledgmentsView()
+        }
     }
 }

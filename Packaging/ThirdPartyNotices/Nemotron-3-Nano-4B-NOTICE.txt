@@ -1,0 +1,13 @@
+NVIDIA Nemotron 3 Nano 4B
+
+This application includes converted model weights derived from
+nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16.
+
+Licensed by NVIDIA Corporation under the NVIDIA Nemotron Model License.
+
+The Core AI conversion and INT8 compression are project modifications and are
+not produced, endorsed, or certified by NVIDIA. NVIDIA and Nemotron are used
+only to identify the origin of the model.
+
+Source and conversion provenance is recorded in
+ModelProvenance/Nemotron-3-Nano-4B-CoreAI.json.

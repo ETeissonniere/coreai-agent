@@ -18,6 +18,27 @@ verify_root() {
         printf 'error: unsafe path in model checksum manifest: %s\n' "$manifest" >&2
         return 1
     fi
+    if awk '{ sub(/^[0-9a-f]{64}  /, ""); print }' "$manifest" | sort | uniq -d | grep -q .; then
+        printf 'error: duplicate path in model checksum manifest: %s\n' "$manifest" >&2
+        return 1
+    fi
+    if find "$asset_root" -type l ! -path "$asset_root/.cache/*" -print -quit | grep -q .; then
+        printf 'error: symbolic links are not allowed in model assets: %s\n' "$asset_root" >&2
+        return 1
+    fi
+    manifest_paths="$(awk '{ sub(/^[0-9a-f]{64}  /, ""); print }' "$manifest" | LC_ALL=C sort)"
+    asset_paths="$(
+        CDPATH= cd -- "$asset_root"
+        find . -type f \
+            ! -name SHA256SUMS \
+            ! -name .DS_Store \
+            ! -path './.cache/*' \
+            -print | sed 's#^\./##' | LC_ALL=C sort
+    )"
+    if [ "$manifest_paths" != "$asset_paths" ]; then
+        printf 'error: checksum manifest does not exactly cover model assets: %s\n' "$manifest" >&2
+        return 1
+    fi
     manifest_absolute="$(CDPATH= cd -- "$(dirname -- "$manifest")" && pwd)/$(basename -- "$manifest")"
     (CDPATH= cd -- "$asset_root" && shasum -a 256 -c "$manifest_absolute")
 }

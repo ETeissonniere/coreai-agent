@@ -1,48 +1,41 @@
 # Nemotron model provenance and redistribution
 
-This document records the feasibility-spike provenance and the release gate
-that would apply to a future Core AI conversion of
-`nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16`. It is an engineering compliance
-checklist, not legal advice.
+This document records the provenance and redistribution controls for the Core
+AI conversion of `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` bundled as the app's
+Fast model. It is an engineering compliance checklist, not legal advice.
 
 ## Feasibility status
 
-**Nemotron is not bundled in the app.** The isolated Core AI Mamba-2 spike
-compiled and executed correctly, but the chunked/parallel prefill candidate
-failed the performance gate at the model's actual mixer dimensions: it was 34%
-slower than the sequential recurrence at eight tokens and 53% slower at 32
-tokens. Because the app's workload is decode dominated, the investigation then
-continued through a clean full-model implementation and a 2.238 GB INT4 export.
-That artifact produced finite logits, but Core AI could not compile its FP32 SSM
-regions for ANE and fell back to 0.829 tok/s. An all-FP16 SSM alternative showed
-2.51% mean mixer-output drift by 512 tokens, and two bounded full exports were
-terminated by memory pressure before producing an asset. None of these artifacts
-was integrated or added to packaging. The application continues to bundle only
-its existing Qwen models.
+The original custom INT4 feasibility path did not pass its performance and
+numerical-quality gates and remains rejected. It is not the artifact shipped by
+the application.
 
-The obligations and checklist below are retained for a future implementation.
-They are not a claim that this repository currently redistributes Nemotron
-weights.
+The app instead bundles a separately produced **INT8 Core AI** profile at
+`Models/Nemotron-3-Nano-4B-CoreAI/gpu-pipelined/` for Fast mode. Packaging is
+fail-closed: it verifies the complete `SHA256SUMS` manifest, the exact source
+revision recorded in model metadata, the expected INT8 compression profile,
+and the compiled model digest before copying the tree into the signed app.
 
 ## Pinned artifact provenance
 
-Do not export or redistribute an artifact obtained from a moving branch. Before
-conversion, record the following in the conversion manifest and release notes:
+The packaged provenance resource records:
 
 - Hugging Face repository: [`nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16)
-- exact immutable Hugging Face commit SHA. The feasibility spike uses
+- exact immutable Hugging Face commit SHA:
   `dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f`;
-- filenames and SHA-256 digests for the BF16 weights, configuration, tokenizer,
-  chat template, and any parser inputs;
-- exporter version/commit, Core AI and Xcode versions, quantization recipe, and
+- SHA-256 digests for the source BF16 weights and compiled Core AI model, plus
+  a complete checksum manifest for every file copied into the app;
+- Core AI execution profile, operational context, quantization recipe, and
   SHA-256 digest of the resulting `.aimodel` bundle;
 - the license text and repository file listing captured at that same revision.
 
 At the feasibility-spike revision, `model.safetensors` is 7,947,142,640 bytes
 with SHA-256
 `55d4e2519456c4a9bddf596b0748d630e3b2ce6ff6f4c2b7ed3e07e2b00dad42`.
-These values identify the evaluated source artifact; a release must re-verify
-them rather than treating this document as a download manifest.
+The bundled Core AI `main.mlirb` has SHA-256
+`d4967f627d20274ba8a06e8318f9f82e289b05c1c7e7f3b63b4c597cb35d0970`.
+The machine-readable record is packaged as
+`ModelProvenance/Nemotron-3-Nano-4B-CoreAI.json`.
 
 The model card currently says the model is ready for commercial use and that
 its governing terms are the [NVIDIA Nemotron Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/).
@@ -58,14 +51,12 @@ changes.
 
 ## Redistribution obligations
 
-An INT4 Core AI conversion should be treated as a Derivative Work. Sections 2
+The INT8 Core AI conversion is treated as a Derivative Work. Sections 2
 and 3 of the NVIDIA license permit commercial use, modification, sublicensing,
 and redistribution in source or object form, subject to these conditions:
 
-1. Give every recipient a complete, readable copy of the NVIDIA license. Ship
-   it inside the app resources (for example,
-   `ThirdPartyLicenses/NVIDIA-Nemotron-Open-Model-License.txt`) and expose it in
-   an in-app Acknowledgments view.
+1. Give every recipient a complete, readable copy of the NVIDIA license. It is
+   shipped as `ThirdPartyLicenses/NVIDIA-Nemotron-Open-Model-License.txt`.
 2. Preserve all applicable copyright, patent, trademark, and attribution
    notices from the source form in distributed source.
 3. Inspect the **pinned** upstream tree for a `NOTICE` file. If one exists,
@@ -110,22 +101,57 @@ obligation to audit any data or code actually copied.
   claims concerning the Work or its outputs. Escalate relevant disputes to
   counsel.
 
-## Future release checklist
+## Release checklist
 
-This checklist is intentionally incomplete. It becomes applicable only if a
-future feasibility and performance gate passes and the project proposes to
-redistribute converted Nemotron weights.
-
-- [ ] Immutable Hugging Face revision and all input/output hashes recorded.
-- [ ] Conversion recipe, exporter commit, Core AI version, and Xcode version recorded.
-- [ ] License text from the pinned revision included in the app and visible in Acknowledgments.
-- [ ] Pinned repository checked for `NOTICE`; required notice and attribution included if present.
-- [ ] Applicable source notices preserved.
-- [ ] Tokenizer, template, parser, configuration, and copied-code licenses audited.
+- [x] Immutable Hugging Face revision and source/output hashes recorded.
+- [x] Core AI profile, compression recipe, operational context, and compilation timestamp recorded.
+- [x] Complete governing license included in the app resources.
+- [x] Pinned repository checked for `NOTICE`; no upstream `NOTICE` exists at this revision.
+- [x] Project attribution notice included with the required NVIDIA sentence.
+- [ ] Tokenizer, template, parser, configuration, and copied-code licenses re-audited for the release candidate.
 - [ ] Product copy uses NVIDIA marks descriptively and does not imply endorsement.
 - [ ] App Store/EULA/DRM compatibility reviewed.
 - [ ] Export-control and sanctions review completed for enabled territories.
-- [ ] License, notices, manifest, checksums, and acknowledgment evidence archived with the release.
+- [ ] Packaged app passes the checksum/provenance verifier and its license,
+      notice, manifest, and checksums are archived with the release.
+
+## Publishing the converted artifact
+
+The verified conversion is published at immutable Hugging Face revision
+[`edf3a07fcd5657d4c2549ace034fa864681337a1`](https://huggingface.co/ETeissonniere/Nemotron-3-Nano-4B-CoreAI/tree/edf3a07fcd5657d4c2549ace034fa864681337a1).
+The app's download tooling pins this revision rather than following `main`.
+
+The license permits commercial distribution of Derivative Works, including an
+INT8 Core AI conversion, provided the redistribution conditions above are met.
+If the artifact is published separately on Hugging Face, publish the entire
+verified model tree together with:
+
+- the complete `NVIDIA-Nemotron-Open-Model-License.txt`;
+- the project `NOTICE` containing “Licensed by NVIDIA Corporation under the
+  NVIDIA Nemotron Model License.”;
+- the machine-readable provenance JSON and `SHA256SUMS`;
+- a model card that identifies the NVIDIA source repository and immutable
+  revision, describes the Core AI INT8 modifications, states the 4,096-token
+  operational context of this conversion, and says the conversion is not
+  produced, endorsed, or certified by NVIDIA.
+
+Recommended Hugging Face model-card metadata:
+
+```yaml
+license: other
+license_name: nvidia-nemotron-open-model-license
+license_link: https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/
+base_model: nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16
+pipeline_tag: text-generation
+library_name: coreai
+tags:
+  - coreai
+  - int8
+  - macos
+```
+
+Do not publish from an unpinned or unverified workspace, and do not imply that
+NVIDIA supports the converted runtime.
 
 Primary sources: the [pinned model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16/blob/dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f/README.md),
 [pinned repository files](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16/tree/dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f),
