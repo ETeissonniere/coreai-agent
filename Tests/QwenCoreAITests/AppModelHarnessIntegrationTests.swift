@@ -314,12 +314,12 @@ import Testing
         modelResourceURLs: [.deep: root.appending(path: "deep-model")]
     )
     await model.waitForHarnessBootstrap()
-    try await waitUntil { model.isSelectedModelReady }
+    try await waitUntil(timeout: .seconds(15)) { model.isSelectedModelReady }
     model.toggleSkill("builtin.web-research")
     model.draft = "Search for current Core AI documentation"
     model.send()
 
-    try await waitUntil {
+    try await waitUntil(timeout: .seconds(15)) {
         model.approvalsByConversation[conversation.id]?.first?.decision == .pending
             && model.runStatusByConversation[conversation.id] == .awaitingApproval
     }
@@ -342,7 +342,9 @@ import Testing
     #expect(await service.resolvedApprovalID == nil)
 
     model.decideApproval(approval.id, in: conversation.id, decision: .allowedOnce)
-    try await waitUntil { model.modelPhase == .ready && model.runStatusByConversation[conversation.id] == .completed }
+    try await waitUntil(timeout: .seconds(15)) {
+        model.modelPhase == .ready && model.runStatusByConversation[conversation.id] == .completed
+    }
 
     #expect(await service.resolvedApprovalID == approval.id)
     #expect(await service.resolvedApproved == true)

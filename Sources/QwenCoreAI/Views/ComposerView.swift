@@ -146,12 +146,13 @@ struct ComposerView: View {
         } label: {
             ViewThatFits(in: .horizontal) {
                 modelProfileLabel(presentation, showsText: true)
-                    .frame(width: 92, height: 44)
                 modelProfileLabel(presentation, showsText: false)
-                    .frame(width: 44, height: 44)
             }
+            .frame(height: 44, alignment: .center)
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(height: 44, alignment: .center)
         .disabled(model.modelPhase != .ready)
         .help(presentation.help)
         .accessibilityLabel("Response model")
@@ -175,16 +176,19 @@ struct ComposerView: View {
     ) -> some View {
         HStack(spacing: 5) {
             Image(systemName: presentation.systemImage)
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 20, height: 20, alignment: .center)
                 .foregroundStyle(presentation.statusColor)
             if showsText {
                 Text(presentation.label)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.tertiary)
             }
         }
+        .frame(width: showsText ? 96 : 44, height: 44, alignment: .center)
         .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
         .contentShape(RoundedRectangle(cornerRadius: 12))
     }
