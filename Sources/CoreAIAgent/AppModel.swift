@@ -348,7 +348,10 @@ final class AppModel {
     }
 
     func newConversation(in folderID: UUID?) {
-        let conversation = Conversation(folderID: folderID)
+        let conversation = Conversation(
+            folderID: folderID,
+            modelProfile: selectedModelProfile
+        )
         conversations.insert(conversation, at: 0)
         openConversationIDs.append(conversation.id)
         selectedConversationID = conversation.id
