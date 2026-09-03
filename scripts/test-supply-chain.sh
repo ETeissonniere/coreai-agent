@@ -39,6 +39,10 @@ trap 'rm -rf "$fixture"' EXIT HUP INT TERM
 printf 'trusted artifact\n' > "$fixture/model.bin"
 (CDPATH= cd -- "$fixture" && shasum -a 256 model.bin > SHA256SUMS)
 "$repo_root/scripts/verify-model-assets.sh" "$fixture" >/dev/null
+# Hugging Face `hf download --local-dir` writes this sidecar; it is not a
+# model asset and is omitted from SHA256SUMS.
+printf '* filter=lfs diff=lfs merge=lfs -text\n' > "$fixture/.gitattributes"
+"$repo_root/scripts/verify-model-assets.sh" "$fixture" >/dev/null
 printf 'unlisted artifact\n' > "$fixture/extra.bin"
 if "$repo_root/scripts/verify-model-assets.sh" "$fixture" >/dev/null 2>&1; then
     printf '%s\n' 'error: checksum verification accepted an unlisted artifact' >&2
