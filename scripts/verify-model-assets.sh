@@ -32,6 +32,7 @@ verify_root() {
         find . -type f \
             ! -name SHA256SUMS \
             ! -name .DS_Store \
+            ! -name .gitattributes \
             ! -path './.cache/*' \
             -print | sed 's#^\./##' | LC_ALL=C sort
     )"
