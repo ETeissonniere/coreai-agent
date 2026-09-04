@@ -39,11 +39,40 @@ public struct DuckDuckGoSearchProvider: WebSearching, Sendable {
 
     private let fetcher: any WebFetching
 
-    public init(fetcher: any WebFetching = URLSessionWebFetcher()) {
+    public init(fetcher: any WebFetching = URLSessionWebFetcher(
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+        successfulStatusCodes: 200...200
+    )) {
         self.fetcher = fetcher
     }
 
     public func search(query: String, maximumResults: Int) async throws -> [WebSource] {
+        var sources: [WebSource] = []
+        do {
+            sources = try await searchInstantAnswer(query: query, maximumResults: maximumResults)
+                .filter { !Self.isSearchIndexURL($0.url) }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            sources = []
+        }
+        if sources.count < maximumResults {
+            do {
+                let html = try await searchHTML(query: query, maximumResults: maximumResults)
+                for source in html where sources.count < maximumResults {
+                    guard !sources.contains(where: { $0.url == source.url }) else { continue }
+                    sources.append(source)
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if sources.isEmpty { throw error }
+            }
+        }
+        return sources
+    }
+
+    private func searchInstantAnswer(query: String, maximumResults: Int) async throws -> [WebSource] {
         var components = URLComponents(string: "https://api.duckduckgo.com/")!
         components.queryItems = [
             URLQueryItem(name: "q", value: query),
@@ -67,14 +96,14 @@ public struct DuckDuckGoSearchProvider: WebSearching, Sendable {
         }
         let envelope = try JSONDecoder().decode(Envelope.self, from: response.data)
         var sources: [WebSource] = []
-        if let value = envelope.AbstractURL, let url = URL(string: value), !value.isEmpty,
+        if let value = envelope.AbstractURL, let url = Self.publicSourceURL(from: value),
            !envelope.AbstractText.isEmpty {
             sources.append(WebSource(title: envelope.Heading, url: url, snippet: envelope.AbstractText))
         }
         func append(_ topics: [Envelope.Topic]) {
             for topic in topics where sources.count < maximumResults {
                 if let nested = topic.Topics { append(nested) }
-                if let value = topic.FirstURL, let url = URL(string: value), !value.isEmpty,
+                if let value = topic.FirstURL, let url = Self.publicSourceURL(from: value),
                    let text = topic.Text {
                     sources.append(WebSource(title: String(text.prefix(120)), url: url, snippet: text))
                 }
@@ -82,8 +111,7 @@ public struct DuckDuckGoSearchProvider: WebSearching, Sendable {
         }
         append(envelope.Results ?? [])
         append(envelope.RelatedTopics)
-        if !sources.isEmpty { return Array(sources.prefix(maximumResults)) }
-        return try await searchHTML(query: query, maximumResults: maximumResults)
+        return Array(sources.prefix(maximumResults))
     }
 
     private func searchHTML(query: String, maximumResults: Int) async throws -> [WebSource] {
@@ -100,33 +128,67 @@ public struct DuckDuckGoSearchProvider: WebSearching, Sendable {
         }
         let pattern = #"(?is)class=[\"']result__a[\"'][^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>"#
         let expression = try NSRegularExpression(pattern: pattern)
+        let snippetExpression = try NSRegularExpression(
+            pattern: #"(?is)class=[\"']result__snippet[\"'][^>]*>(.*?)</a>"#
+        )
         let range = NSRange(html.startIndex..., in: html)
         var results: [WebSource] = []
         for match in expression.matches(in: html, range: range) where results.count < maximumResults {
             guard let hrefRange = Range(match.range(at: 1), in: html),
                   let titleRange = Range(match.range(at: 2), in: html),
-                  let url = Self.resultURL(from: String(html[hrefRange])) else { continue }
-            try PublicWebURLPolicy.validate(url)
+                  let url = Self.publicSourceURL(from: String(html[hrefRange])) else { continue }
+            let snippet = Self.snippet(in: html, after: match.range, using: snippetExpression)
+                ?? "Search result from DuckDuckGo"
             results.append(WebSource(
                 title: Self.plainHTML(String(html[titleRange])),
                 url: url,
-                snippet: "Search result from DuckDuckGo"
+                snippet: snippet
             ))
         }
         return results
     }
 
-    private static func resultURL(from href: String) -> URL? {
+    private static func publicSourceURL(from href: String, depth: Int = 0) -> URL? {
+        guard depth < 3 else { return nil }
         let decoded = href.replacingOccurrences(of: "&amp;", with: "&")
-        let absolute = decoded.hasPrefix("//") ? "https:\(decoded)" : decoded
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let absolute: String
+        if decoded.hasPrefix("//") {
+            absolute = "https:\(decoded)"
+        } else if decoded.hasPrefix("/") {
+            absolute = "https://html.duckduckgo.com\(decoded)"
+        } else {
+            absolute = decoded
+        }
         guard let url = URL(string: absolute) else { return nil }
         if url.host?.lowercased().hasSuffix("duckduckgo.com") == true,
            let escaped = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-            .queryItems?.first(where: { $0.name == "uddg" })?.value,
-           let destination = URL(string: escaped) {
-            return destination
+            .queryItems?.first(where: { $0.name == "uddg" })?.value {
+            return publicSourceURL(from: escaped, depth: depth + 1)
+        }
+        guard (try? PublicWebURLPolicy.validate(url)) != nil, !isSearchIndexURL(url) else {
+            return nil
         }
         return url
+    }
+
+    private static func isSearchIndexURL(_ url: URL) -> Bool {
+        url.host?.lowercased().hasSuffix("duckduckgo.com") == true
+    }
+
+    private static func snippet(
+        in html: String,
+        after range: NSRange,
+        using expression: NSRegularExpression
+    ) -> String? {
+        let start = range.upperBound
+        let window = min(html.utf16.count - start, 2_000)
+        guard window > 0 else { return nil }
+        let snippetRange = NSRange(location: start, length: window)
+        guard let match = expression.firstMatch(in: html, range: snippetRange),
+              let captured = Range(match.range(at: 1), in: html) else { return nil }
+        let text = plainHTML(String(html[captured]))
+        return text.isEmpty ? nil : String(text.prefix(400))
     }
 
     private static func plainHTML(_ value: String) -> String {
@@ -134,6 +196,8 @@ public struct DuckDuckGoSearchProvider: WebSearching, Sendable {
             .replacingOccurrences(of: "&amp;", with: "&")
             .replacingOccurrences(of: "&quot;", with: "\"")
             .replacingOccurrences(of: "&#x27;", with: "'")
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
@@ -256,6 +320,63 @@ public enum PublicWebURLPolicy {
     }
 }
 
+/// Recoverable web-tool outcomes returned as tool output so Foundation Models
+/// can continue the turn instead of aborting on a thrown `Tool` error.
+enum WebToolStatus {
+    static func search(outcome: String, detail: String, attempts: Int? = nil) -> String {
+        let attemptsAttribute = attempts.map { " attempts=\"\($0)\"" } ?? ""
+        return """
+        <web_search_status outcome="\(xmlAttribute(outcome))"\(attemptsAttribute)">\(detail) This status applies only to this searchWeb call. Try a different query, then fetchWebPage on useful result URLs before answering.</web_search_status>
+        """
+    }
+
+    static func search(error: any Error, attempts: Int) -> String {
+        if WebSearchTool.isAvailabilityFailure(error) {
+            return """
+            <web_search_status outcome="temporarily_unavailable" attempts="\(attempts)">Web search is temporarily unavailable for this call. Try a different query. If later calls also fail, tell the user current information could not be verified and offer to try again.</web_search_status>
+            """
+        }
+        return search(
+            outcome: "failed",
+            detail: error.localizedDescription,
+            attempts: attempts
+        )
+    }
+
+    static func fetch(url: String, error: any Error) -> String {
+        fetch(url: url, outcome: outcome(for: error), detail: error.localizedDescription)
+    }
+
+    static func fetch(url: String, outcome: String, detail: String) -> String {
+        """
+        <web_fetch_status outcome="\(xmlAttribute(outcome))" url="\(xmlAttribute(url))">\(detail) Continue without this page, tell the user which source was skipped and why, then use other sources or searchWeb if needed.</web_fetch_status>
+        """
+    }
+
+    private static func outcome(for error: any Error) -> String {
+        guard let error = error as? WebToolError else {
+            return "unavailable"
+        }
+        switch error {
+        case .invalidURL: return "invalid_url"
+        case .disallowedHost: return "disallowed_host"
+        case .responseTooLarge: return "too_large"
+        case .unsupportedMIMEType: return "unsupported_mime"
+        case .invalidStatus(let status): return "http_\(status)"
+        case .invalidEncoding: return "invalid_encoding"
+        case .invalidQuery: return "invalid_query"
+        case .toolCallLimitExceeded: return "limit_exceeded"
+        }
+    }
+
+    private static func xmlAttribute(_ value: String) -> String {
+        value.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+}
+
 @Generable(description: "A concise public-web search request")
 public struct WebSearchArguments: Sendable, Equatable {
     @Guide(description: "Search terms only, without instructions")
@@ -292,7 +413,12 @@ public struct WebSearchTool: Tool {
     public func call(arguments: WebSearchArguments) async throws -> String {
         try Task.checkCancellation()
         let query = arguments.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty, query.count <= 500 else { throw WebToolError.invalidQuery }
+        guard !query.isEmpty, query.count <= 500 else {
+            return WebToolStatus.search(
+                outcome: "invalid_query",
+                detail: "The search query is empty or too long. Ask a clarifying question or try a shorter query."
+            )
+        }
         let limit = 5
         let operation: @Sendable () async throws -> String = {
             return try await Self.search(
@@ -337,22 +463,21 @@ public struct WebSearchTool: Tool {
             ).prefix(limit)
         } catch is CancellationError {
             throw CancellationError()
-        } catch let error where isFatalSearchError(error) {
-            throw error
         } catch {
-            return """
-            <web_search_status outcome="temporarily_unavailable" attempts="\(retryDelays.count + 1)">Web search is temporarily unavailable. Continue without web results, clearly tell the user that current information could not be verified, and offer to try again.</web_search_status>
-            """
+            return WebToolStatus.search(error: error, attempts: retryDelays.count + 1)
         }
-        guard !sources.isEmpty else {
-            // A successful provider response with no instant answers is not a
-            // tool execution failure. Returning a non-empty, structured status
-            // also prevents reasoning models from treating an empty tool
+        let allowed = sources.filter { (try? PublicWebURLPolicy.validate($0.url)) != nil }
+        guard !allowed.isEmpty else {
+            // A successful provider response with no usable public sources is
+            // not a tool execution failure. Returning a non-empty, structured
+            // status also prevents reasoning models from treating an empty tool
             // payload as a malformed call and immediately retrying it.
-            return "<web_search_status>No results were returned for this query. Try a more specific query or explain that no sources were found.</web_search_status>"
+            return WebToolStatus.search(
+                outcome: "no_results",
+                detail: "No results were returned for this query. Try a different, more specific query."
+            )
         }
-        for source in sources { try PublicWebURLPolicy.validate(source.url) }
-        return sources.enumerated().map { index, source in
+        return allowed.enumerated().map { index, source in
             let title = String(source.title.prefix(300))
             let snippet = String(source.snippet.prefix(400))
             return "<untrusted_web_result index=\"\(index + 1)\">\nTitle: \(title)\nURL: \(source.url.absoluteString)\nSnippet: \(snippet)\n</untrusted_web_result>"
@@ -379,6 +504,12 @@ public struct WebSearchTool: Tool {
             }
         }
         preconditionFailure("The search retry loop must return or throw")
+    }
+
+    /// Transient provider failures may be retried. Validation, policy, and
+    /// resource-boundary failures must not be retried as availability issues.
+    static func isAvailabilityFailure(_ error: any Error) -> Bool {
+        !isFatalSearchError(error)
     }
 
     /// Validation, policy, and resource-boundary failures must never be hidden
@@ -440,6 +571,16 @@ public struct WebFetchTool: Tool {
 
     public func call(arguments: WebFetchArguments) async throws -> String {
         try Task.checkCancellation()
+        do {
+            return try await fetchPage(arguments: arguments)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return WebToolStatus.fetch(url: arguments.url, error: error)
+        }
+    }
+
+    private func fetchPage(arguments: WebFetchArguments) async throws -> String {
         guard let url = URL(string: arguments.url) else { throw WebToolError.invalidURL }
         try PublicWebURLPolicy.validate(url)
         let allowedMIMETypes: Set<String> = ["text/html", "text/plain", "application/json"]
@@ -460,7 +601,15 @@ public struct WebFetchTool: Tool {
             throw WebToolError.invalidEncoding
         }
         let content = mimeType == "text/html" ? Self.plainText(fromHTML: text) : text
-        return "Source: \(response.finalURL.absoluteString)\nContent-Type: \(mimeType)\n\n\(content)"
+        let readable = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !readable.isEmpty else {
+            return WebToolStatus.fetch(
+                url: response.finalURL.absoluteString,
+                outcome: "empty",
+                detail: "The page did not contain readable text. It may be a script-only, login-walled, or blocked page."
+            )
+        }
+        return "Source: \(response.finalURL.absoluteString)\nContent-Type: \(mimeType)\n\n\(readable)"
     }
 
     static func plainText(fromHTML html: String) -> String {

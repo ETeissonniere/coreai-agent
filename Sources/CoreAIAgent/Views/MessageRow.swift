@@ -282,7 +282,12 @@ private struct ExecutionTraceStep<Content: View>: View {
 
 private struct InlineToolActivityView: View {
     let activity: ToolActivityPresentation
-    @State private var isExpanded = false
+    @State private var isExpanded: Bool
+
+    init(activity: ToolActivityPresentation) {
+        self.activity = activity
+        _isExpanded = State(initialValue: activity.state == .failed || activity.state == .unavailable)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -315,6 +320,14 @@ private struct InlineToolActivityView: View {
             }
             .buttonStyle(.plain)
 
+            if !isExpanded, let preview = collapsedErrorPreview {
+                Text(preview)
+                    .font(.caption)
+                    .foregroundStyle(activity.state == .failed || activity.result?.isError == true ? Color.red : Color.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+            }
+
             if isExpanded {
                 VStack(alignment: .leading, spacing: 7) {
                     LabeledContent("Effect", value: effectLabel)
@@ -326,10 +339,10 @@ private struct InlineToolActivityView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 7))
                     }
-                    if let result = activity.result {
-                        Text(result.content)
+                    if let result = activity.displayResult {
+                        Text(result)
                             .font(.caption)
-                            .foregroundStyle(result.isError ? Color.red : Color.secondary)
+                            .foregroundStyle(activity.result?.isError == true ? Color.red : Color.secondary)
                             .textSelection(.enabled)
                     }
                     ForEach(activity.sourceURLs, id: \.self) { url in
@@ -346,6 +359,11 @@ private struct InlineToolActivityView: View {
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Tool: \(activity.displayName), \(activity.state.label)")
+    }
+
+    private var collapsedErrorPreview: String? {
+        guard activity.state == .failed || activity.state == .unavailable else { return nil }
+        return activity.displayResult
     }
 
     private var statusColor: Color {

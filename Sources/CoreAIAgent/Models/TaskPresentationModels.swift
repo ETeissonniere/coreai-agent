@@ -123,6 +123,18 @@ struct ToolActivityPresentation: Identifiable, Sendable {
         var seen = Set<URL>()
         return detector.matches(in: content, range: range).compactMap(\.url).filter { seen.insert($0).inserted }
     }
+
+    var displayResult: String? {
+        guard let content = result?.content, !content.isEmpty else { return nil }
+        return Self.sanitizedToolOutput(content)
+    }
+
+    static func sanitizedToolOutput(_ content: String) -> String {
+        content
+            .replacingOccurrences(of: #"</?web_(search|fetch)_status[^>]*>"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"</?untrusted_web_result[^>]*>"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 /// Ephemeral, display-only chronology for one assistant turn. Tool payloads and

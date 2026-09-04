@@ -3,8 +3,14 @@ import Foundation
 public struct URLSessionWebFetcher: WebFetching, Sendable {
     private let session: URLSession
     private let timeout: TimeInterval
+    private let userAgent: String
+    private let successfulStatusCodes: ClosedRange<Int>
 
-    public init(timeout: TimeInterval = 15) {
+    public init(
+        timeout: TimeInterval = 15,
+        userAgent: String = "CoreAIAgent/1",
+        successfulStatusCodes: ClosedRange<Int> = 200...299
+    ) {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = timeout
@@ -18,6 +24,8 @@ public struct URLSessionWebFetcher: WebFetching, Sendable {
             delegateQueue: nil
         )
         self.timeout = timeout
+        self.userAgent = userAgent
+        self.successfulStatusCodes = successfulStatusCodes
     }
 
     public func fetch(
@@ -29,11 +37,13 @@ public struct URLSessionWebFetcher: WebFetching, Sendable {
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "GET"
         request.setValue(allowedMIMETypes.sorted().joined(separator: ", "), forHTTPHeaderField: "Accept")
-        request.setValue("CoreAIAgent/1", forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         let (bytes, response) = try await session.bytes(for: request)
         try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse else { throw WebToolError.invalidStatus(0) }
-        guard (200...299).contains(http.statusCode) else { throw WebToolError.invalidStatus(http.statusCode) }
+        guard successfulStatusCodes.contains(http.statusCode) else {
+            throw WebToolError.invalidStatus(http.statusCode)
+        }
         let finalURL = try http.url.map { url -> URL in
             try PublicWebURLPolicy.validate(url)
             return url
