@@ -62,5 +62,12 @@ struct ConversationTabStrip: View {
         .contentShape(Rectangle())
         .onTapGesture { model.selectConversation(conversation.id) }
         .onHover { isHovering in hoveredTabID = isHovering ? conversation.id : nil }
+        .contextMenu {
+            Button("Close Tab") { model.closeTab(conversation.id) }
+            Button("Close Other Tabs") { model.closeOtherTabs(keeping: conversation.id) }
+                .disabled(model.openConversationIDs.count < 2)
+            Button("Close Tabs to the Right") { model.closeTabsToRight(of: conversation.id) }
+                .disabled(model.openConversationIDs.last == conversation.id)
+        }
     }
 }

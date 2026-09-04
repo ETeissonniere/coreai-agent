@@ -45,6 +45,8 @@ final class AppModel {
     private let harnessStore: any HarnessStoring
     private let titleService: any TitleGenerating
     private var persistenceTask: Task<Void, Never>?
+    private var modelLoadTask: Task<Void, Never>?
+    private var requestedModelLoad: ModelLoadRequest?
     private var generationTask: Task<Void, Never>?
     private var generatingConversationID: UUID?
     private var generatingResponseID: UUID?
@@ -55,6 +57,12 @@ final class AppModel {
     private var compactionByConversation = [UUID: StructuredCompactionState]()
     private var approvalInvocationIDs = [UUID: UUID]()
     private var durableArtifactsByConversation = [UUID: [AgentArtifact]]()
+    private var queuedSubmissions = [UUID: QueuedSubmission]()
+
+    private struct ModelLoadRequest {
+        let profile: ModelProfile
+        let conversationID: UUID?
+    }
 
     init(
         modelService: any ModelServing = CoreAIModelService(),
@@ -89,6 +97,11 @@ final class AppModel {
             openConversationIDs = restored.openConversationIDs
             selectedConversationID = restored.selectedConversationID
             draftAttachmentsByConversation = restored.draftAttachments ?? [:]
+            queuedSubmissions = restored.queuedSubmissions ?? [:]
+            for (conversationID, submission) in queuedSubmissions {
+                drafts[conversationID] = submission.prompt
+                draftAttachmentsByConversation[conversationID] = submission.attachments
+            }
         } else {
             selectedConversationID = conversations.first?.id
             openConversationIDs = conversations.map(\.id)
@@ -109,6 +122,7 @@ final class AppModel {
             ? ([ModelProfile.deep, .fast].first { modelURLs[$0] != nil } ?? initialProfile)
             : initialProfile
         if loadProfile != initialProfile, let index = selectedIndex {
+            queuedSubmissions[conversations[index].id] = nil
             conversations[index].modelProfile = loadProfile
             conversations[index].reasoningEnabled = loadProfile.defaultReasoningEnabled
             modelSelectionNotice = "\(initialProfile.modelName) is not bundled. Using \(loadProfile.modelName)."
@@ -151,6 +165,10 @@ final class AppModel {
 
     var isSelectedModelReady: Bool {
         modelPhase == .ready && activeModelProfile == selectedModelProfile
+    }
+
+    var isSelectedSubmissionQueued: Bool {
+        selectedConversationID.map { queuedSubmissions[$0] != nil } ?? false
     }
 
     func isModelAvailable(_ profile: ModelProfile) -> Bool { modelURLs[profile] != nil }
@@ -199,7 +217,8 @@ final class AppModel {
     }
 
     func addAttachments(from urls: [URL]) {
-        guard let conversationID = selectedConversationID, !urls.isEmpty else { return }
+        guard let conversationID = selectedConversationID, queuedSubmissions[conversationID] == nil,
+              !urls.isEmpty else { return }
         attachmentNotice = nil
         attachmentIngestionConversationIDs.insert(conversationID)
         Task {
@@ -354,7 +373,7 @@ final class AppModel {
         )
         conversations.insert(conversation, at: 0)
         openConversationIDs.append(conversation.id)
-        selectedConversationID = conversation.id
+        selectConversationID(conversation.id)
         draft = ""
         schedulePersistence()
         activateSelectedModelIfNeeded()
@@ -363,10 +382,10 @@ final class AppModel {
 
     func selectConversation(_ id: UUID) {
         if !openConversationIDs.contains(id) { openConversationIDs.append(id) }
-        selectedConversationID = id
-        enabledSkillIDs = enabledSkillIDsByConversation[id] ?? []
+        selectConversationID(id)
         schedulePersistence()
         activateSelectedModelIfNeeded()
+        sendQueuedSubmissionIfReady()
     }
 
     /// Restores the last request to the composer so a failed response can be
@@ -390,12 +409,33 @@ final class AppModel {
 
     func closeTab(_ id: UUID) {
         guard let tabIndex = openConversationIDs.firstIndex(of: id) else { return }
+        queuedSubmissions[id] = nil
         openConversationIDs.remove(at: tabIndex)
         if selectedConversationID == id {
-            selectedConversationID = openConversationIDs.indices.contains(tabIndex)
+            selectConversationID(openConversationIDs.indices.contains(tabIndex)
                 ? openConversationIDs[tabIndex]
-                : openConversationIDs.last
+                : openConversationIDs.last)
         }
+        schedulePersistence()
+        activateSelectedModelIfNeeded()
+    }
+
+    func closeOtherTabs(keeping id: UUID) {
+        guard openConversationIDs.contains(id) else { return }
+        openConversationIDs = [id]
+        selectConversationID(id)
+        schedulePersistence()
+        activateSelectedModelIfNeeded()
+    }
+
+    func closeTabsToRight(of id: UUID) {
+        guard let index = openConversationIDs.firstIndex(of: id),
+              index < openConversationIDs.index(before: openConversationIDs.endIndex) else { return }
+        let retained = Array(openConversationIDs.prefix(through: index))
+        if let selectedConversationID, !retained.contains(selectedConversationID) {
+            selectConversationID(id)
+        }
+        openConversationIDs = retained
         schedulePersistence()
         activateSelectedModelIfNeeded()
     }
@@ -428,17 +468,17 @@ final class AppModel {
         enabledSkillIDsByConversation[id] = nil
         compactionByConversation[id] = nil
         durableArtifactsByConversation[id] = nil
+        queuedSubmissions[id] = nil
 
         if selectedConversationID == id {
             if let removedTabIndex, openConversationIDs.indices.contains(removedTabIndex) {
-                selectedConversationID = openConversationIDs[removedTabIndex]
+                selectConversationID(openConversationIDs[removedTabIndex])
             } else if let openID = openConversationIDs.last {
-                selectedConversationID = openID
+                selectConversationID(openID)
             } else {
-                selectedConversationID = conversations.first?.id
+                selectConversationID(conversations.first?.id)
                 if let selectedConversationID { openConversationIDs = [selectedConversationID] }
             }
-            enabledSkillIDs = selectedConversationID.flatMap { enabledSkillIDsByConversation[$0] } ?? []
         }
         schedulePersistence()
         activateSelectedModelIfNeeded()
@@ -510,76 +550,91 @@ final class AppModel {
         return remainder
     }
 
+    private func selectConversationID(_ id: UUID?) {
+        if selectedConversationID != id, let selectedConversationID {
+            queuedSubmissions[selectedConversationID] = nil
+        }
+        selectedConversationID = id
+        enabledSkillIDs = id.flatMap { enabledSkillIDsByConversation[$0] } ?? []
+    }
+
     func loadModel(from url: URL, for profile: ModelProfile = .deep) {
-        let previousProfile = activeModelProfile
-        let previousURL = modelURL
-        modelURL = url
+        modelURLs[profile] = url
+        requestedModelLoad = ModelLoadRequest(profile: profile, conversationID: selectedConversationID)
         loadingModelProfile = profile
         modelPhase = .loading
-        Task {
-            do {
-                try await modelService.load(resourcesAt: url, for: profile)
-                activeModelProfile = profile
-                loadingModelProfile = nil
-                modelPhase = .ready
-                activateSelectedModelIfNeeded()
-            } catch {
-                loadingModelProfile = nil
-                activeModelProfile = previousProfile
-                modelURL = previousURL
-                if let previousProfile {
-                    if let index = selectedIndex, conversations[index].modelProfile == profile {
-                        conversations[index].modelProfile = previousProfile
-                        conversations[index].reasoningEnabled = previousProfile.defaultReasoningEnabled
-                        conversations[index].updatedAt = .now
-                        schedulePersistence()
-                    }
-                    modelPhase = .ready
-                    modelSelectionNotice = "Could not load \(profile.modelName): \(error.localizedDescription)"
-                } else {
-                    modelPhase = .failed(error.localizedDescription)
-                }
-            }
+        guard modelLoadTask == nil else { return }
+        modelLoadTask = Task { [weak self] in
+            await self?.processModelLoads()
         }
     }
 
+    private func processModelLoads() async {
+        while let request = requestedModelLoad {
+            requestedModelLoad = nil
+            let profile = request.profile
+            guard let url = modelURLs[profile] else { continue }
+            let previousProfile = activeModelProfile
+            let previousURL = modelURL
+            loadingModelProfile = profile
+            modelPhase = .loading
+            do {
+                try await modelService.load(resourcesAt: url, for: profile)
+                activeModelProfile = profile
+                modelURL = url
+                if requestedModelLoad?.profile == profile {
+                    requestedModelLoad = nil
+                }
+                if requestedModelLoad == nil {
+                    loadingModelProfile = nil
+                    modelPhase = .ready
+                    if modelSelectionNotice?.hasPrefix("Loading ") == true {
+                        modelSelectionNotice = nil
+                    }
+                    activateSelectedModelIfNeeded()
+                    sendQueuedSubmissionIfReady()
+                }
+            } catch {
+                if requestedModelLoad == nil {
+                    loadingModelProfile = nil
+                    activeModelProfile = previousProfile
+                    modelURL = previousURL
+                    cancelQueuedSubmissions(for: profile)
+                    if let previousProfile {
+                        if let conversationID = request.conversationID,
+                           let index = conversations.firstIndex(where: { $0.id == conversationID }),
+                           conversations[index].modelProfile == profile {
+                            conversations[index].modelProfile = previousProfile
+                            conversations[index].reasoningEnabled = previousProfile.defaultReasoningEnabled
+                            conversations[index].updatedAt = .now
+                            schedulePersistence()
+                        }
+                        modelPhase = .ready
+                        modelSelectionNotice = "Could not load \(profile.modelName): \(error.localizedDescription)"
+                    } else {
+                        modelPhase = .failed(error.localizedDescription)
+                    }
+                }
+            }
+        }
+        modelLoadTask = nil
+    }
+
     func selectModelProfile(_ profile: ModelProfile) {
-        guard profile != selectedModelProfile, modelPhase == .ready,
+        guard profile != selectedModelProfile,
+              modelPhase != .generating, modelPhase != .compacting,
               let index = selectedIndex else { return }
         guard let url = modelURLs[profile] else {
             modelSelectionNotice = "\(profile.modelName) is not bundled in this build."
             return
         }
-        let conversationID = conversations[index].id
-        loadingModelProfile = profile
-        modelPhase = .loading
+        cancelQueuedSubmission(in: conversations[index].id)
+        conversations[index].modelProfile = profile
+        conversations[index].reasoningEnabled = profile.defaultReasoningEnabled
+        conversations[index].updatedAt = .now
         modelSelectionNotice = "Loading \(profile.modelName)…"
-        Task {
-            do {
-                try await modelService.load(resourcesAt: url, for: profile)
-                activeModelProfile = profile
-                modelURL = url
-                loadingModelProfile = nil
-                modelPhase = .ready
-                guard let currentIndex = conversations.firstIndex(where: { $0.id == conversationID }) else {
-                    modelSelectionNotice = nil
-                    activateSelectedModelIfNeeded()
-                    return
-                }
-                conversations[currentIndex].modelProfile = profile
-                conversations[currentIndex].reasoningEnabled = profile.defaultReasoningEnabled
-                conversations[currentIndex].updatedAt = .now
-                modelSelectionNotice = "\(profile.modelName) is ready. Existing turns will be re-prefilled."
-                schedulePersistence()
-                if selectedConversationID != conversationID {
-                    activateSelectedModelIfNeeded()
-                }
-            } catch {
-                loadingModelProfile = nil
-                modelPhase = activeModelProfile == nil ? .failed(error.localizedDescription) : .ready
-                modelSelectionNotice = "Could not load \(profile.modelName): \(error.localizedDescription)"
-            }
-        }
+        schedulePersistence()
+        loadModel(from: url, for: profile)
     }
 
     func setFastReasoningEnabled(_ enabled: Bool) {
@@ -611,15 +666,37 @@ final class AppModel {
         let rawPrompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedID = selectedConversationID
         let pinnedSkills = selectedID.flatMap { enabledSkillIDsByConversation[$0] } ?? enabledSkillIDs
-        let routing = SkillRouter().route(rawPrompt, availableSkills: availableSkills, pinnedSkillIDs: pinnedSkills)
-        let prompt = routing.prompt
-        guard !prompt.isEmpty, isSelectedModelReady, !isAttachingFiles,
-              let index = selectedIndex else { return }
+        guard !rawPrompt.isEmpty, !isAttachingFiles, let selectedID else { return }
+        if !isSelectedModelReady {
+            guard modelPhase == .loading else { return }
+            guard queuedSubmissions[selectedID] == nil else { return }
+            queuedSubmissions[selectedID] = QueuedSubmission(
+                prompt: rawPrompt,
+                attachments: draftAttachments,
+                pinnedSkillIDs: pinnedSkills,
+                modelProfile: selectedModelProfile
+            )
+            schedulePersistence()
+            return
+        }
+        startSubmission(rawPrompt, attachments: draftAttachments, pinnedSkillIDs: pinnedSkills, in: selectedID)
+    }
 
-        let attachments = draftAttachments
+    private func startSubmission(
+        _ rawPrompt: String,
+        attachments: [ComposerAttachment],
+        pinnedSkillIDs: Set<String>,
+        in conversationID: UUID
+    ) {
+        guard selectedConversationID == conversationID, isSelectedModelReady,
+              let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        let routing = SkillRouter().route(rawPrompt, availableSkills: availableSkills, pinnedSkillIDs: pinnedSkillIDs)
+        let prompt = routing.prompt
+        guard !prompt.isEmpty else { return }
+
         let attachmentContext = attachments.modelContext
         draft = ""
-        draftAttachmentsByConversation[conversations[index].id] = []
+        draftAttachmentsByConversation[conversationID] = []
         let userMessage = ChatMessage(
             role: .user,
             text: prompt,
@@ -1009,6 +1086,39 @@ final class AppModel {
                 }
             }
         }
+    }
+
+    private func sendQueuedSubmissionIfReady() {
+        guard let conversationID = selectedConversationID,
+              isSelectedModelReady,
+              let queued = queuedSubmissions[conversationID],
+              queued.modelProfile == selectedModelProfile else { return }
+        queuedSubmissions[conversationID] = nil
+        startSubmission(
+            queued.prompt,
+            attachments: queued.attachments,
+            pinnedSkillIDs: queued.pinnedSkillIDs,
+            in: conversationID
+        )
+    }
+
+    func cancelQueuedSubmission() {
+        guard let conversationID = selectedConversationID else { return }
+        cancelQueuedSubmission(in: conversationID)
+    }
+
+    private func cancelQueuedSubmission(in conversationID: UUID) {
+        guard queuedSubmissions.removeValue(forKey: conversationID) != nil else { return }
+        schedulePersistence()
+    }
+
+    private func cancelQueuedSubmissions(for profile: ModelProfile) {
+        let queuedIDs = queuedSubmissions.compactMap { id, submission in
+            submission.modelProfile == profile ? id : nil
+        }
+        guard !queuedIDs.isEmpty else { return }
+        for id in queuedIDs { queuedSubmissions[id] = nil }
+        schedulePersistence()
     }
 
     func stop() {
@@ -1860,7 +1970,8 @@ final class AppModel {
             folders: folders,
             openConversationIDs: openConversationIDs,
             selectedConversationID: selectedConversationID,
-            draftAttachments: draftAttachmentsByConversation
+            draftAttachments: draftAttachmentsByConversation,
+            queuedSubmissions: queuedSubmissions
         )
     }
 

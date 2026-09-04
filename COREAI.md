@@ -45,8 +45,9 @@ bundles are intentionally excluded from the first download.
 `make package` embeds this complete model bundle beneath the app's
 `Contents/Resources/Models` directory. The resulting `.app` is self-contained;
 it does not download or locate model weights after installation.
-There is intentionally no model picker: launch verifies and loads the bundled
-asset automatically, then enables the composer when Core AI reports it ready.
+Launch loads the last selected bundled model automatically. The model picker
+remains available during loading, and one submission in the active task can
+wait for the selected model to become ready.
 
 The text asset contract provides a fixed-width prefill function alongside an
 S=1 decode path. The runtime selects prefill automatically without changing the

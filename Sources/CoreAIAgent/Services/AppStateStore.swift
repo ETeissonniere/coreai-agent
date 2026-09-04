@@ -1,5 +1,12 @@
 import Foundation
 
+struct QueuedSubmission: Codable, Equatable, Sendable {
+    let prompt: String
+    let attachments: [ComposerAttachment]
+    let pinnedSkillIDs: Set<String>
+    let modelProfile: ModelProfile
+}
+
 struct PersistedAppState: Codable, Equatable, Sendable {
     static let currentVersion = 1
 
@@ -9,19 +16,22 @@ struct PersistedAppState: Codable, Equatable, Sendable {
     var openConversationIDs: [UUID]
     var selectedConversationID: UUID?
     var draftAttachments: [UUID: [ComposerAttachment]]?
+    var queuedSubmissions: [UUID: QueuedSubmission]?
 
     init(
         conversations: [Conversation],
         folders: [ConversationFolder],
         openConversationIDs: [UUID],
         selectedConversationID: UUID?,
-        draftAttachments: [UUID: [ComposerAttachment]]? = nil
+        draftAttachments: [UUID: [ComposerAttachment]]? = nil,
+        queuedSubmissions: [UUID: QueuedSubmission]? = nil
     ) {
         self.conversations = conversations
         self.folders = folders
         self.openConversationIDs = openConversationIDs
         self.selectedConversationID = selectedConversationID
         self.draftAttachments = draftAttachments
+        self.queuedSubmissions = queuedSubmissions
     }
 
     func restored() -> Self {
@@ -58,7 +68,8 @@ struct PersistedAppState: Codable, Equatable, Sendable {
                 ? restoredSelection.map { [$0] } ?? []
                 : restoredOpenIDs,
             selectedConversationID: restoredSelection,
-            draftAttachments: draftAttachments?.filter { conversationIDs.contains($0.key) }
+            draftAttachments: draftAttachments?.filter { conversationIDs.contains($0.key) },
+            queuedSubmissions: queuedSubmissions?.filter { conversationIDs.contains($0.key) }
         )
     }
 }

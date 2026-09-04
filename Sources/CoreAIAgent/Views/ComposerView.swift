@@ -35,6 +35,10 @@ struct ComposerView: View {
                 Label("Adding files…", systemImage: "paperclip")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if model.isSelectedSubmissionQueued {
+                Label("Message queued until the model is ready", systemImage: "clock")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if modelProfilePresentation.hasWarning,
                let notice = model.modelSelectionNotice {
                 Label(notice, systemImage: "exclamationmark.triangle.fill")
@@ -69,6 +73,7 @@ struct ComposerView: View {
                     .buttonStyle(.plain)
                     .frame(width: 32, height: 44)
                     .help("Attach files or folders")
+                    .disabled(model.isSelectedSubmissionQueued)
 
                 TextField("Describe a task…", text: $model.draft, axis: .vertical)
                 .lineLimit(1...8)
@@ -78,23 +83,22 @@ struct ComposerView: View {
                 .frame(minHeight: 44)
                 .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 16))
                 .onSubmit { model.send() }
+                .disabled(model.isSelectedSubmissionQueued)
 
                 modelProfileMenu
 
-                if model.modelPhase == .loading {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(.white)
-                        .frame(width: 44, height: 44)
-                        .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12))
-                        .accessibilityLabel("Loading model")
-                } else if model.modelPhase == .generating || model.modelPhase == .compacting {
+                if model.modelPhase == .generating || model.modelPhase == .compacting {
                     composerButton("Stop", systemImage: "stop.fill", action: model.stop)
                 } else {
-                    composerButton("Start Task", systemImage: "arrow.up", action: model.send)
+                    composerButton(
+                        model.isSelectedSubmissionQueued ? "Cancel queued message"
+                            : model.modelPhase == .loading ? "Send when ready" : "Start Task",
+                        systemImage: model.isSelectedSubmissionQueued ? "xmark" : "arrow.up",
+                        action: model.isSelectedSubmissionQueued ? model.cancelQueuedSubmission : model.send
+                    )
                         .disabled(
                             model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                || !model.isSelectedModelReady || model.isAttachingFiles
+                                || model.isAttachingFiles
                         )
                 }
             }
@@ -111,6 +115,7 @@ struct ComposerView: View {
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
+            guard !model.isSelectedSubmissionQueued else { return false }
             model.addAttachments(from: urls)
             return !urls.isEmpty
         } isTargeted: { isDropTarget = $0 }
@@ -153,7 +158,7 @@ struct ComposerView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(height: 44, alignment: .center)
-        .disabled(model.modelPhase != .ready)
+        .disabled(model.modelPhase == .generating || model.modelPhase == .compacting)
         .help(presentation.help)
         .accessibilityLabel("Response model")
         .accessibilityValue(presentation.accessibilityValue)
