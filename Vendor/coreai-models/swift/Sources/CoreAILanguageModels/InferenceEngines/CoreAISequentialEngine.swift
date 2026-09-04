@@ -364,12 +364,17 @@ public final class CoreAISequentialEngine: InferenceEngine, @unchecked Sendable 
             if commonPrefix < input.count && commonPrefix < history.count {
                 // Divergence: input differs from history. Full reset needed.
                 internalReset(to: 0)
+                lastPrefixHitCount = 0
             } else if processedTokenCount >= input.count {
                 // Pure extension: all input tokens match history. Rewind for seeding.
                 let resetTo = Swift.max(0, commonPrefix - 1)
                 internalReset(to: resetTo)
+                lastPrefixHitCount = resetTo
+            } else {
+                lastPrefixHitCount = commonPrefix
             }
-            lastPrefixHitCount = commonPrefix
+        } else {
+            lastPrefixHitCount = 0
         }
 
         let token = GenerationToken()
@@ -413,6 +418,7 @@ public final class CoreAISequentialEngine: InferenceEngine, @unchecked Sendable 
             $0 = nil
         }
         internalReset(to: tokenIndex)
+        lastPrefixHitCount = 0
     }
 
     /// Internal reset without cancelling the active generation token.

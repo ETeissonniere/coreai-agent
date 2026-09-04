@@ -9,13 +9,17 @@ import Foundation
 struct ToolCallParser {
     enum Event {
         case text(String)
-        case toolCall(id: String, name: String, argsJSON: String)
+        case toolCall(
+            id: String, name: String, argsJSON: String, rawText: String,
+            rawGroupID: UUID, rawGroupCallIDs: [String]
+        )
     }
 
     private let openMarker: String
     private let closeMarker: String
     private var buffer: String = ""
     private var isInsideToolCall: Bool = false
+    private var rawPrefix: String = ""
 
     init(openMarker: String = "<tool_call>", closeMarker: String = "</tool_call>") {
         self.openMarker = openMarker
@@ -51,9 +55,27 @@ struct ToolCallParser {
     private mutating func processMarker(at range: Range<String.Index>, events: inout [Event]) {
         let before = String(buffer[buffer.startIndex..<range.lowerBound])
         if isInsideToolCall {
-            events.append(contentsOf: parseToolCalls(from: before))
-        } else if !before.isEmpty {
+            let rawText = rawPrefix + openMarker + before + closeMarker
+            let rawGroupID = UUID()
+            let parsed = parseToolCalls(from: before)
+            let callIDs = parsed.compactMap { event -> String? in
+                guard case .toolCall(let id, _, _, _, _, _) = event else { return nil }
+                return id
+            }
+            events.append(contentsOf: parsed.map { event in
+                guard case .toolCall(let id, let name, let argsJSON, _, _, _) = event else {
+                    return event
+                }
+                return .toolCall(
+                    id: id, name: name, argsJSON: argsJSON,
+                    rawText: rawText, rawGroupID: rawGroupID, rawGroupCallIDs: callIDs)
+            })
+            rawPrefix = ""
+        } else if before.allSatisfy(\.isWhitespace) {
+            rawPrefix = before
+        } else {
             events.append(.text(before))
+            rawPrefix = ""
         }
         buffer = String(buffer[range.upperBound...])
     }
@@ -65,11 +87,33 @@ struct ToolCallParser {
             // token — the block ends at EOS. Try to parse what we have.
             // For tag-pair formats, an unclosed block is malformed: drop it.
             if closeMarker == "\n" {
-                events.append(contentsOf: parseToolCalls(from: buffer))
+                let rawText = rawPrefix + openMarker + buffer
+                let rawGroupID = UUID()
+                let parsed = parseToolCalls(from: buffer)
+                let callIDs = parsed.compactMap { event -> String? in
+                    guard case .toolCall(let id, _, _, _, _, _) = event else { return nil }
+                    return id
+                }
+                events.append(contentsOf: parsed.map { event in
+                    guard case .toolCall(let id, let name, let argsJSON, _, _, _) = event else {
+                        return event
+                    }
+                    return .toolCall(
+                        id: id, name: name, argsJSON: argsJSON,
+                        rawText: rawText, rawGroupID: rawGroupID, rawGroupCallIDs: callIDs)
+                })
             }
+            rawPrefix = ""
             buffer = ""
         } else {
-            let safe = isFinal ? buffer.endIndex : lastSafeIndex(for: openMarker)
+            var safe = isFinal ? buffer.endIndex : lastSafeIndex(for: openMarker)
+            if !isFinal {
+                while safe > buffer.startIndex {
+                    let previous = buffer.index(before: safe)
+                    guard buffer[previous].isWhitespace else { break }
+                    safe = previous
+                }
+            }
             if safe > buffer.startIndex {
                 let toEmit = String(buffer[buffer.startIndex..<safe])
                 if !toEmit.isEmpty { events.append(.text(toEmit)) }
@@ -158,7 +202,9 @@ struct ToolCallParser {
             guard let data = try? JSONSerialization.data(withJSONObject: arguments),
                 let argsJSON = String(data: data, encoding: .utf8)
             else { return [] }
-            events.append(.toolCall(id: UUID().uuidString, name: name, argsJSON: argsJSON))
+            events.append(.toolCall(
+                id: UUID().uuidString, name: name, argsJSON: argsJSON,
+                rawText: "", rawGroupID: UUID(), rawGroupCallIDs: []))
         }
         return events
     }
@@ -197,7 +243,9 @@ struct ToolCallParser {
             argsJSON = "{}"
         }
 
-        return .toolCall(id: UUID().uuidString, name: name, argsJSON: argsJSON)
+        return .toolCall(
+            id: UUID().uuidString, name: name, argsJSON: argsJSON,
+            rawText: "", rawGroupID: UUID(), rawGroupCallIDs: [])
     }
 
     /// Rightmost index such that the suffix from there to end-of-buffer is NOT

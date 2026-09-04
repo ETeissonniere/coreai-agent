@@ -16,6 +16,8 @@ struct ToolCallParserTests {
     func qwenXMLToolCall() throws {
         var parser = ToolCallParser()
         let input = """
+
+
             <tool_call>
             <function=countCharacters>
             <parameter=text>
@@ -26,6 +28,7 @@ struct ToolCallParserTests {
             """
         let call = try #require(singleCall(parser.consume(input) + parser.flush()))
         #expect(call.name == "countCharacters")
+        #expect(call.rawText == input)
         #expect(try JSONSerialization.jsonObject(with: Data(call.arguments.utf8)) as? [String: String]
             == ["text": "CoreAI"])
     }
@@ -39,6 +42,16 @@ struct ToolCallParserTests {
         ]
         let call = try #require(singleCall(chunks.flatMap { parser.consume($0) } + parser.flush()))
         #expect(call.name == "countCharacters")
+    }
+
+    @Test("Protocol whitespace remains part of a streamed tool call")
+    func qwenWhitespaceBeforeMarker() throws {
+        var parser = ToolCallParser()
+        let whitespaceEvents = parser.consume("\n\n")
+        let callText = "<tool_call>{\"name\":\"search\",\"arguments\":{}}</tool_call>"
+        let call = try #require(singleCall(
+            whitespaceEvents + parser.consume(callText) + parser.flush()))
+        #expect(call.rawText == "\n\n" + callText)
     }
 
     @Test("Duplicate Qwen parameters are rejected")
@@ -69,9 +82,13 @@ struct ToolCallParserTests {
         #expect(arguments["text"] == "  CoreAI  ")
     }
 
-    private func singleCall(_ events: [ToolCallParser.Event]) -> (name: String, arguments: String)? {
-        let calls = events.compactMap { event -> (String, String)? in
-            if case .toolCall(_, let name, let arguments) = event { return (name, arguments) }
+    private func singleCall(
+        _ events: [ToolCallParser.Event]
+    ) -> (name: String, arguments: String, rawText: String)? {
+        let calls = events.compactMap { event -> (String, String, String)? in
+            if case .toolCall(_, let name, let arguments, let rawText, _, _) = event {
+                return (name, arguments, rawText)
+            }
             return nil
         }
         return calls.count == 1 ? calls[0] : nil

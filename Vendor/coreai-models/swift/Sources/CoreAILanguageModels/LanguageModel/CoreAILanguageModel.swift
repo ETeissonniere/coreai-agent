@@ -9,6 +9,41 @@ import FoundationModels
 import Synchronization
 import Tokenizers
 
+private final class ToolCallTextCache: Sendable {
+    private static let capacity = 1_024
+
+    private struct Entry: Sendable {
+        let text: String
+        let groupID: UUID
+        let groupCallIDs: Set<String>
+    }
+
+    private let entriesByID = Mutex<[String: Entry]>([:])
+
+    func store(_ text: String, groupID: UUID, groupCallIDs: [String], for id: String) {
+        guard groupCallIDs.count <= Self.capacity else { return }
+        entriesByID.withLock {
+            if $0[id] == nil, $0.count >= Self.capacity,
+                let evictedGroup = $0.first(where: { $0.value.groupID != groupID })?.value.groupID
+            {
+                $0 = $0.filter { $0.value.groupID != evictedGroup }
+            }
+            $0[id] = Entry(text: text, groupID: groupID, groupCallIDs: Set(groupCallIDs))
+        }
+    }
+
+    func text(for calls: Transcript.ToolCalls) -> String? {
+        entriesByID.withLock { entriesByID in
+            let entries = calls.compactMap { entriesByID[$0.id] }
+            guard entries.count == calls.count else { return nil }
+            let callIDs = Set(calls.map(\.id))
+            guard entries.allSatisfy({ $0.groupCallIDs.isSubset(of: callIDs) }) else { return nil }
+            var seen = Set<UUID>()
+            return entries.filter { seen.insert($0.groupID).inserted }.map(\.text).joined()
+        }
+    }
+}
+
 /// FoundationModels Adoption for Core AI inference engines.
 ///
 /// Wraps any `InferenceEngine` (pipelined, sequential, or static-shape) and exposes it
@@ -38,6 +73,8 @@ public struct CoreAILanguageModel: LanguageModel {
     private let supportsToolCalling: Bool
     private let supportsReasoning: Bool
     private let additionalEosTokenIds: [Int32]
+    private let chatTemplateOverride: String?
+    private let toolCallTextCache: ToolCallTextCache
 
     // MARK: - Protocol Requirements
 
@@ -60,7 +97,9 @@ public struct CoreAILanguageModel: LanguageModel {
             modelIdentifier: modelIdentifier,
             samplingConfig: samplingConfig,
             vocabSize: vocabSize,
-            additionalEosTokenIds: additionalEosTokenIds
+            additionalEosTokenIds: additionalEosTokenIds,
+            chatTemplateOverride: chatTemplateOverride,
+            toolCallTextCache: toolCallTextCache
         )
     }
 
@@ -102,7 +141,8 @@ public struct CoreAILanguageModel: LanguageModel {
         modelIdentifier: String = "coreai-model",
         samplingConfig: SamplingConfiguration = .greedy,
         vocabSize: Int? = nil,
-        additionalEosTokenIds: [Int32] = []
+        additionalEosTokenIds: [Int32] = [],
+        chatTemplateOverride: String? = nil
     ) {
         self.engine = engine
         self.tokenizer = tokenizer
@@ -110,6 +150,8 @@ public struct CoreAILanguageModel: LanguageModel {
         self.samplingConfig = samplingConfig
         self.vocabSize = vocabSize
         self.additionalEosTokenIds = additionalEosTokenIds
+        self.chatTemplateOverride = chatTemplateOverride
+        self.toolCallTextCache = ToolCallTextCache()
         self.supportsToolCalling = CoreAIExecutor.detectToolCallMarkers(using: tokenizer) != nil
         self.supportsReasoning =
             tokenizer.convertTokenToId("<think>") != nil
@@ -128,15 +170,19 @@ public struct CoreAILanguageModel: LanguageModel {
             fileprivate let samplingConfig: SamplingConfiguration
             fileprivate let vocabSize: Int?
             fileprivate let additionalEosTokenIds: [Int32]
+            fileprivate let chatTemplateOverride: String?
+            fileprivate let toolCallTextCache: ToolCallTextCache
 
             public static func == (lhs: Configuration, rhs: Configuration) -> Bool {
                 lhs.modelIdentifier == rhs.modelIdentifier
                     && lhs.samplingConfig == rhs.samplingConfig
+                    && lhs.chatTemplateOverride == rhs.chatTemplateOverride
             }
 
             public func hash(into hasher: inout Hasher) {
                 hasher.combine(modelIdentifier)
                 hasher.combine(samplingConfig)
+                hasher.combine(chatTemplateOverride)
             }
         }
 
@@ -161,6 +207,8 @@ public struct CoreAILanguageModel: LanguageModel {
         /// (see `detectToolCallMarkers`). nil when the model's tokenizer
         /// has no tool call tokens.
         private let toolCallMarkers: (open: String, close: String)?
+        private let chatTemplateOverride: String?
+        private let toolCallTextCache: ToolCallTextCache
 
         // MARK: - Initialization
 
@@ -172,6 +220,8 @@ public struct CoreAILanguageModel: LanguageModel {
             self.vocabSize = configuration.vocabSize
             self.thinkingMarkers = Self.detectThinkingMarkers(using: configuration.tokenizer)
             self.toolCallMarkers = Self.detectToolCallMarkers(using: configuration.tokenizer)
+            self.chatTemplateOverride = configuration.chatTemplateOverride
+            self.toolCallTextCache = configuration.toolCallTextCache
 
             // Build the full set of EOS-like token IDs
             var eos = Set<Int32>()
@@ -290,7 +340,7 @@ public struct CoreAILanguageModel: LanguageModel {
                 for: transcript,
                 hasTools: !request.enabledToolDefinitions.isEmpty
             )
-            let promptTokens = Self.makeTokens(
+            let promptTokens = makeTokens(
                 from: transcript,
                 using: tokenizer,
                 tools: request.enabledToolDefinitions,
@@ -350,6 +400,7 @@ public struct CoreAILanguageModel: LanguageModel {
                 samplingConfiguration: samplingConfig,
                 inferenceOptions: InferenceOptions(maxTokens: maxTokens)
             )
+            var cachedTokenCount: Int?
 
             // Use pre-computed set of all EOS-like tokens (main + additional)
             let eosTokens = eosTokenIds
@@ -386,6 +437,10 @@ public struct CoreAILanguageModel: LanguageModel {
             var reasoningTokenCount: Int = 0
 
             for try await output in tokenStream {
+                // Prefix resolution completes before the first output. Capture
+                // it while this generation still owns the shared engine.
+                cachedTokenCount = cachedTokenCount
+                    ?? min(promptTokens.count, engine.lastPrefixHitCount)
                 let token = output.tokenId
                 CLILogger.log("Generated token ID: \(token)", component: "CoreAIExecutor", level: 2)
                 if eosTokens.contains(token) {
@@ -442,10 +497,16 @@ public struct CoreAILanguageModel: LanguageModel {
                 toolCallParser = tcp
             }
 
+            let resolvedCachedTokenCount = cachedTokenCount
+                ?? min(promptTokens.count, engine.lastPrefixHitCount)
+
             await channel.send(
                 .response(
                     action: .updateUsage(
-                        input: .init(totalTokenCount: promptTokens.count, cachedTokenCount: 0),
+                        input: .init(
+                            totalTokenCount: promptTokens.count,
+                            cachedTokenCount: resolvedCachedTokenCount
+                        ),
                         output: .init(
                             totalTokenCount: generatedTokenCount,
                             reasoningTokenCount: reasoningTokenCount
@@ -504,7 +565,11 @@ public struct CoreAILanguageModel: LanguageModel {
                         .response(action: .appendText(text, tokenCount: 1))
                     )
                 }
-            case .toolCall(let id, let name, let argsJSON):
+            case .toolCall(
+                let id, let name, let argsJSON, let rawText, let rawGroupID, let rawGroupCallIDs
+            ):
+                toolCallTextCache.store(
+                    rawText, groupID: rawGroupID, groupCallIDs: rawGroupCallIDs, for: id)
                 CLILogger.log(
                     "ToolCallParser: dispatching tool call id=\(id) name=\(name) args=\(argsJSON)",
                     component: "CoreAIExecutor")
@@ -629,62 +694,17 @@ public struct CoreAILanguageModel: LanguageModel {
         /// Handles all entry types including prior tool calls and tool outputs.
         /// Tool definitions are forwarded to `applyChatTemplate` so the model
         /// sees the available functions in the system prompt.
-        static func makeTokens(
+        private func makeTokens(
             from entries: [Transcript.Entry],
             using tokenizer: any Tokenizer,
             tools: [Transcript.ToolDefinition] = [],
             reasoningMode: ReasoningMode = .standard,
             component: String = "CoreAIExecutor"
         ) -> [Int] {
-            var messages: [Message] = []
-
-            for entry in entries {
-                switch entry {
-                case .instructions(let instructions):
-                    let text = sanitizeTemplateContent(
-                        textContent(of: instructions.segments, separator: "\n"))
-                    if !text.isEmpty { messages.append(["role": "system", "content": text]) }
-
-                case .prompt(let prompt):
-                    let text = sanitizeTemplateContent(textContent(of: prompt.segments))
-                    if !text.isEmpty { messages.append(["role": "user", "content": text]) }
-
-                case .response(let response):
-                    let text = sanitizeTemplateContent(textContent(of: response.segments))
-                    if !text.isEmpty { messages.append(["role": "assistant", "content": text]) }
-
-                case .toolCalls(let toolCalls):
-                    let calls = toolCalls.map {
-                        ToolCallEntry(id: $0.id, name: $0.toolName, arguments: $0.arguments.jsonString)
-                    }
-                    messages.append([
-                        "role": "assistant",
-                        "content": "" as any Sendable,
-                        "tool_calls": calls.map(\.message) as any Sendable,
-                    ])
-
-                case .toolOutput(let output):
-                    // Tool result turn.
-                    let content = sanitizeTemplateContent(textContent(of: output.segments))
-                    messages.append([
-                        "role": "tool",
-                        "tool_call_id": output.id,
-                        "name": output.toolName,
-                        "content": content,
-                    ])
-
-                case .reasoning:
-                    // Don't echo the model's prior reasoning back into the prompt.
-                    continue
-
-                @unknown default:
-                    continue
-                }
-            }
-
+            let messages = Self.makeMessages(from: entries) { toolCallTextCache.text(for: $0) }
             if messages.isEmpty { return [] }
 
-            let toolSpecs: [ToolSpec]? = tools.isEmpty ? nil : tools.compactMap { makeToolSpec(from: $0) }
+            let toolSpecs: [ToolSpec]? = tools.isEmpty ? nil : tools.compactMap { Self.makeToolSpec(from: $0) }
             var templateContext: [String: any Sendable] = [:]
             if reasoningMode == .low {
                 // Qwen defaults to xhigh reasoning. A tool turn also needs room
@@ -703,6 +723,10 @@ public struct CoreAILanguageModel: LanguageModel {
                 CLILogger.log("Applying chat template via tokenizer", component: component)
                 return try tokenizer.applyChatTemplate(
                     messages: messages,
+                    chatTemplate: chatTemplateOverride.map(ChatTemplateArgument.literal),
+                    addGenerationPrompt: true,
+                    truncation: false,
+                    maxLength: nil,
                     tools: toolSpecs,
                     additionalContext: templateContext.isEmpty ? nil : templateContext
                 )
@@ -722,6 +746,80 @@ public struct CoreAILanguageModel: LanguageModel {
                 let text = messages.compactMap { $0["content"] as? String }.joined(separator: "\n")
                 return tokenizer.encode(text: text)
             }
+        }
+
+        static func makeMessages(
+            from entries: [Transcript.Entry],
+            rawToolCallText: ((Transcript.ToolCalls) -> String?)? = nil
+        ) -> [Message] {
+            var messages: [Message] = []
+            var pendingReasoning: String?
+
+            for entry in entries {
+                switch entry {
+                case .instructions(let instructions):
+                    pendingReasoning = nil
+                    let text = sanitizeTemplateContent(
+                        textContent(of: instructions.segments, separator: "\n"))
+                    if !text.isEmpty { messages.append(["role": "system", "content": text]) }
+
+                case .prompt(let prompt):
+                    pendingReasoning = nil
+                    let text = sanitizeTemplateContent(textContent(of: prompt.segments))
+                    if !text.isEmpty { messages.append(["role": "user", "content": text]) }
+
+                case .response(let response):
+                    let text = sanitizeTemplateContent(textContent(of: response.segments))
+                    if !text.isEmpty {
+                        var message: Message = ["role": "assistant", "content": text]
+                        if let pendingReasoning { message["reasoning_content"] = pendingReasoning }
+                        messages.append(message)
+                    }
+                    pendingReasoning = nil
+
+                case .toolCalls(let toolCalls):
+                    if let rawText = rawToolCallText?(toolCalls) {
+                        var message: Message = ["role": "assistant", "content": rawText]
+                        if let pendingReasoning { message["reasoning_content"] = pendingReasoning }
+                        messages.append(message)
+                        pendingReasoning = nil
+                        continue
+                    }
+                    let calls = toolCalls.map {
+                        ToolCallEntry(id: $0.id, name: $0.toolName, arguments: $0.arguments.jsonString)
+                    }
+                    var message: Message = [
+                        "role": "assistant",
+                        "content": "" as any Sendable,
+                        "tool_calls": calls.map(\.message) as any Sendable,
+                    ]
+                    if let pendingReasoning { message["reasoning_content"] = pendingReasoning }
+                    messages.append(message)
+                    pendingReasoning = nil
+
+                case .toolOutput(let output):
+                    pendingReasoning = nil
+                    // Tool result turn.
+                    let content = sanitizeTemplateContent(textContent(of: output.segments))
+                    messages.append([
+                        "role": "tool",
+                        "tool_call_id": output.id,
+                        "name": output.toolName,
+                        "content": content,
+                    ])
+
+                case .reasoning(let reasoning):
+                    // The model already generated these tokens. Preserve them on the
+                    // following assistant entry so re-rendering remains an exact prefix
+                    // and recurrent models do not have to rebuild their entire state.
+                    pendingReasoning = (pendingReasoning ?? "") + textContent(of: reasoning.segments)
+
+                @unknown default:
+                    continue
+                }
+            }
+
+            return messages
         }
 
         /// Prevent untrusted content from being interpreted as Qwen control tokens

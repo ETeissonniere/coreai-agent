@@ -168,8 +168,6 @@ final class CoreAIPipelinedEngine: InferenceEngine, Sendable {
 
                 // Implicit prefix caching: resolve input against history
                 var (commonPrefix, resolvedNewTokens) = self.history.resolve(input: input)
-                self.lastPrefixHitCount = commonPrefix
-
                 // Detect TRUE divergence before backup (tokens actually differ)
                 let isDivergence = commonPrefix < input.count && commonPrefix < self.history.count
 
@@ -208,6 +206,7 @@ final class CoreAIPipelinedEngine: InferenceEngine, Sendable {
                     // read as divergence and full-reset).
                     self.history.truncate(to: commonPrefix)
                 }
+                self.lastPrefixHitCount = commonPrefix
 
                 let newTokens = Array(resolvedNewTokens)
 
@@ -291,6 +290,7 @@ final class CoreAIPipelinedEngine: InferenceEngine, Sendable {
         precondition(
             tokenIndex >= 0 && tokenIndex <= processedTokenCount,
             "reset(to: \(tokenIndex)) out of range [0, \(processedTokenCount)]")
+        lastPrefixHitCount = 0
         if tokenIndex == 0 {
             // Full reset: cancel + drain + clear everything
             _activeToken.withLock {
@@ -1460,7 +1460,9 @@ private struct EngineImpl: ~Copyable {
         if !prompt.isEmpty {
             let prefillTokens: ArraySlice<Int32>
             if prompt.count > config.chunkThreshold
-                || (prefillFunction != nil && prompt.count > 1) {
+                || (prefillFunction != nil && prompt.count > 1)
+                || (logitsBaseDesc.shape[1] > 0 && prompt.count > logitsBaseDesc.shape[1])
+            {
                 prefillTokens = try await processChunkedInput(tokens: prompt)
             } else {
                 let prefillCapacity = max(1, prompt.count)
@@ -1547,7 +1549,10 @@ private struct EngineImpl: ~Copyable {
             return remainingTokens
         }
 
-        let chunkSize = config.prefillChunkSize
+        // Decode-only exports have a static S=1 logits view and must prefill
+        // token-wise. Dynamic-output graphs can use the configured chunk size.
+        let staticLogitsLength = logitsBaseDesc.shape[1]
+        let chunkSize = staticLogitsLength > 0 ? staticLogitsLength : config.prefillChunkSize
 
         try logits.ensureCapacity(forContextLength: chunkSize)
 

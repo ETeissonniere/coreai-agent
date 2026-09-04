@@ -1,6 +1,8 @@
 import Foundation
 import Testing
 
+@testable import CoreAIAgent
+
 @Test func fourKContextReservesEnoughRoomForReasoningToolCallAndAnswer() {
     #expect(CoreAIModelService.responseTokenReserve(for: 4_096) == 1_536)
 }
@@ -23,8 +25,6 @@ import Testing
     #expect(retry.hasSuffix("/no_think"))
     #expect(!retry.contains("(request.prompt)"))
 }
-@testable import CoreAIAgent
-
 @Test func conversationStartsEmpty() {
     let conversation = Conversation()
     #expect(conversation.title == "New Chat")
