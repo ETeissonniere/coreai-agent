@@ -77,6 +77,7 @@ actor CoreAIModelService: ModelServing {
         }
         let limits = try Self.readContextLimits(from: metadata)
         let loadedModel = try await CoreAILanguageModel(resourcesAt: url)
+        LanguageModelSession(model: loadedModel).prewarm()
         await finishLoading(loadedModel, maxContextLength: limits, profile: profile)
     }
 
