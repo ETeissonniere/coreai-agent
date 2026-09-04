@@ -20,6 +20,7 @@ struct ToolCallParser {
     private var buffer: String = ""
     private var isInsideToolCall: Bool = false
     private var rawPrefix: String = ""
+    private(set) var emittedToolCall = false
 
     init(openMarker: String = "<tool_call>", closeMarker: String = "</tool_call>") {
         self.openMarker = openMarker
@@ -58,6 +59,7 @@ struct ToolCallParser {
             let rawText = rawPrefix + openMarker + before + closeMarker
             let rawGroupID = UUID()
             let parsed = parseToolCalls(from: before)
+            emittedToolCall = emittedToolCall || !parsed.isEmpty
             let callIDs = parsed.compactMap { event -> String? in
                 guard case .toolCall(let id, _, _, _, _, _) = event else { return nil }
                 return id
@@ -90,6 +92,7 @@ struct ToolCallParser {
                 let rawText = rawPrefix + openMarker + buffer
                 let rawGroupID = UUID()
                 let parsed = parseToolCalls(from: buffer)
+                emittedToolCall = emittedToolCall || !parsed.isEmpty
                 let callIDs = parsed.compactMap { event -> String? in
                     guard case .toolCall(let id, _, _, _, _, _) = event else { return nil }
                     return id

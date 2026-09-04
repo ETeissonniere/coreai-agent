@@ -211,6 +211,7 @@ actor CoreAIModelService: ModelServing {
         let session = state.session
         let clock = ContinuousClock()
         let start = clock.now
+        let decodeBaseline = await model.decodeMetrics.snapshot()
         var firstTokenAt: ContinuousClock.Instant?
         var journalEventCount = state.journalEventCount
         var finalResponse = ""
@@ -243,6 +244,7 @@ actor CoreAIModelService: ModelServing {
             }
             let now = clock.now
             let usage = snapshot.usage
+            let decode = await model.decodeMetrics.snapshot()
             let contextTokens = usage.input.totalTokenCount + usage.output.totalTokenCount
             state.contextTokens = contextTokens
             sessions[conversationID] = state
@@ -271,7 +273,9 @@ actor CoreAIModelService: ModelServing {
                     generatedTokens: usage.output.totalTokenCount,
                     reasoningTokens: usage.output.reasoningTokenCount,
                     timeToFirstToken: start.duration(to: firstTokenAt ?? now),
-                    elapsed: start.duration(to: now)
+                    elapsed: start.duration(to: now),
+                    decodeTokens: decode.tokens - decodeBaseline.tokens,
+                    decodeDuration: .seconds(decode.seconds - decodeBaseline.seconds)
                 ),
                 kvCache: Self.snapshot(model.kvCacheStatistics)
             )))

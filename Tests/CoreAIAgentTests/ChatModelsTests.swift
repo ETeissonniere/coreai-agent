@@ -38,11 +38,27 @@ import Testing
         generatedTokens: 40,
         reasoningTokens: 8,
         timeToFirstToken: .seconds(2),
-        elapsed: .seconds(6)
+        elapsed: .seconds(10),
+        decodeTokens: 28,
+        decodeDuration: .seconds(4)
     )
     #expect(metrics.prefillTokensPerSecond == 40)
-    #expect(metrics.tokensPerSecond == 10)
+    #expect(metrics.tokensPerSecond == 7)
     #expect(metrics.contextTokens == 140)
+}
+
+@Test func generationMetricsRequirePositiveDecodeDuration() {
+    let metrics = GenerationMetrics(
+        promptTokens: 100,
+        cachedTokens: 0,
+        generatedTokens: 40,
+        reasoningTokens: 0,
+        timeToFirstToken: .seconds(2),
+        elapsed: .seconds(10),
+        decodeTokens: 28,
+        decodeDuration: .zero
+    )
+    #expect(metrics.tokensPerSecond == 0)
 }
 
 @Test func modelProfilesExposeTheAcceptedRuntimeMetadata() {

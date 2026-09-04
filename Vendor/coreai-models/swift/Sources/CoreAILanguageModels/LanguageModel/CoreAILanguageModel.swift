@@ -75,6 +75,7 @@ public struct CoreAILanguageModel: LanguageModel {
     private let additionalEosTokenIds: [Int32]
     private let chatTemplateOverride: String?
     private let toolCallTextCache: ToolCallTextCache
+    public let decodeMetrics: DecodeMetrics
 
     // MARK: - Protocol Requirements
 
@@ -99,7 +100,8 @@ public struct CoreAILanguageModel: LanguageModel {
             vocabSize: vocabSize,
             additionalEosTokenIds: additionalEosTokenIds,
             chatTemplateOverride: chatTemplateOverride,
-            toolCallTextCache: toolCallTextCache
+            toolCallTextCache: toolCallTextCache,
+            decodeMetrics: decodeMetrics
         )
     }
 
@@ -152,6 +154,7 @@ public struct CoreAILanguageModel: LanguageModel {
         self.additionalEosTokenIds = additionalEosTokenIds
         self.chatTemplateOverride = chatTemplateOverride
         self.toolCallTextCache = ToolCallTextCache()
+        self.decodeMetrics = DecodeMetrics()
         self.supportsToolCalling = CoreAIExecutor.detectToolCallMarkers(using: tokenizer) != nil
         self.supportsReasoning =
             tokenizer.convertTokenToId("<think>") != nil
@@ -172,6 +175,7 @@ public struct CoreAILanguageModel: LanguageModel {
             fileprivate let additionalEosTokenIds: [Int32]
             fileprivate let chatTemplateOverride: String?
             fileprivate let toolCallTextCache: ToolCallTextCache
+            fileprivate let decodeMetrics: DecodeMetrics
 
             public static func == (lhs: Configuration, rhs: Configuration) -> Bool {
                 lhs.modelIdentifier == rhs.modelIdentifier
@@ -209,6 +213,7 @@ public struct CoreAILanguageModel: LanguageModel {
         private let toolCallMarkers: (open: String, close: String)?
         private let chatTemplateOverride: String?
         private let toolCallTextCache: ToolCallTextCache
+        private let decodeMetrics: DecodeMetrics
 
         // MARK: - Initialization
 
@@ -222,6 +227,7 @@ public struct CoreAILanguageModel: LanguageModel {
             self.toolCallMarkers = Self.detectToolCallMarkers(using: configuration.tokenizer)
             self.chatTemplateOverride = configuration.chatTemplateOverride
             self.toolCallTextCache = configuration.toolCallTextCache
+            self.decodeMetrics = configuration.decodeMetrics
 
             // Build the full set of EOS-like token IDs
             var eos = Set<Int32>()
@@ -435,12 +441,15 @@ public struct CoreAILanguageModel: LanguageModel {
             }
             var generatedTokenCount: Int = 0
             var reasoningTokenCount: Int = 0
+            let clock = ContinuousClock()
+            var firstGeneratedTokenAt: ContinuousClock.Instant?
 
             for try await output in tokenStream {
                 // Prefix resolution completes before the first output. Capture
                 // it while this generation still owns the shared engine.
                 cachedTokenCount = cachedTokenCount
                     ?? min(promptTokens.count, engine.lastPrefixHitCount)
+                let generatedTokenAt = clock.now
                 let token = output.tokenId
                 CLILogger.log("Generated token ID: \(token)", component: "CoreAIExecutor", level: 2)
                 if eosTokens.contains(token) {
@@ -449,6 +458,7 @@ public struct CoreAILanguageModel: LanguageModel {
                 }
 
                 generatedTokens.append(token)
+                firstGeneratedTokenAt = firstGeneratedTokenAt ?? generatedTokenAt
                 tokenStep += 1
                 generatedTokenCount += 1
 
@@ -499,6 +509,13 @@ public struct CoreAILanguageModel: LanguageModel {
 
             let resolvedCachedTokenCount = cachedTokenCount
                 ?? min(promptTokens.count, engine.lastPrefixHitCount)
+            if toolCallParser?.emittedToolCall != true,
+               let firstGeneratedTokenAt {
+                await decodeMetrics.record(
+                    tokens: generatedTokenCount,
+                    duration: firstGeneratedTokenAt.duration(to: clock.now)
+                )
+            }
 
             await channel.send(
                 .response(

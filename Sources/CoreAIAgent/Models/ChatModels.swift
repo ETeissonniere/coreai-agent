@@ -134,11 +134,13 @@ struct GenerationMetrics: Codable, Equatable, Sendable {
     var reasoningTokens: Int
     var timeToFirstToken: Duration
     var elapsed: Duration
+    var decodeTokens: Int? = nil
+    var decodeDuration: Duration? = nil
 
     var tokensPerSecond: Double {
-        let seconds = elapsed.seconds - timeToFirstToken.seconds
+        let seconds = decodeDuration?.seconds ?? elapsed.seconds - timeToFirstToken.seconds
         guard seconds > 0 else { return 0 }
-        return Double(generatedTokens) / seconds
+        return Double(decodeTokens ?? generatedTokens) / seconds
     }
 
     var prefillTokensPerSecond: Double {
