@@ -200,19 +200,10 @@ private actor ProfileModelServiceStub: ModelServing {
         self.delayedProfiles = delayedProfiles
     }
 
-    func load(resourcesAt url: URL) async throws {}
     func load(resourcesAt url: URL, for profile: ModelProfile) async throws {
         loadedProfiles.append(profile)
         if delayedProfiles.contains(profile) { try await Task.sleep(for: .milliseconds(100)) }
         if failingProfiles.contains(profile) { throw ProfileTestError.loadFailed }
-    }
-    nonisolated func generate(conversationID: UUID, prompt: String) -> AsyncThrowingStream<GenerationEvent, Error> {
-        AsyncThrowingStream { $0.finish() }
-    }
-    nonisolated func generate(
-        conversationID: UUID, prompt: String, enabledSkillIDs: Set<String>
-    ) -> AsyncThrowingStream<GenerationEvent, Error> {
-        AsyncThrowingStream { $0.finish() }
     }
     nonisolated func generate(request: ModelGenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         AsyncThrowingStream { $0.finish() }
