@@ -109,15 +109,16 @@ import Testing
     #expect(await provider.lastLimit == 5)
 }
 
-@Test func webSearchRejectsPrivateSourceURLs() async {
+@Test func webSearchRejectsPrivateSourceURLsWithoutFailingTheTool() async throws {
     let provider = StubSearchProvider(sources: [
         WebSource(title: "Unsafe", url: URL(string: "https://127.0.0.1/private")!, snippet: "No")
     ])
-    await #expect(throws: WebToolError.disallowedHost) {
-        try await WebSearchTool(provider: provider).call(
-            arguments: WebSearchArguments(query: "unsafe")
-        )
-    }
+    let output = try await WebSearchTool(provider: provider).call(
+        arguments: WebSearchArguments(query: "unsafe")
+    )
+
+    #expect(output.contains("<web_search_status outcome=\"no_results\""))
+    #expect(output.contains("No results were returned"))
 }
 
 @Test func webSearchReturnsStructuredStatusWhenProviderHasNoResults() async throws {
@@ -125,7 +126,7 @@ import Testing
         arguments: WebSearchArguments(query: "narrow query")
     )
 
-    #expect(output.contains("<web_search_status>"))
+    #expect(output.contains("<web_search_status outcome=\"no_results\""))
     #expect(output.contains("No results were returned"))
     #expect(!output.isEmpty)
 }
@@ -154,13 +155,13 @@ import Testing
     #expect(await provider.callCount == 3)
 }
 
-@Test func webSearchDoesNotRetryPolicyFailure() async {
+@Test func webSearchReportsPolicyFailureToModelInsteadOfThrowing() async throws {
     let provider = FailingSearchProvider(error: .disallowedHost)
     let tool = WebSearchTool(provider: provider, retryDelays: [.zero, .zero])
+    let output = try await tool.call(arguments: WebSearchArguments(query: "unsafe"))
 
-    await #expect(throws: WebToolError.disallowedHost) {
-        try await tool.call(arguments: WebSearchArguments(query: "unsafe"))
-    }
+    #expect(output.contains("<web_search_status outcome=\"failed\""))
+    #expect(output.contains("The URL host is not public."))
     #expect(await provider.callCount == 1)
 }
 
@@ -194,7 +195,7 @@ import Testing
         mimeType: "application/json",
         data: Data(payload.utf8)
     ))
-    let results = try await DuckDuckGoSearchProvider(fetcher: fetcher).search(query: "swift", maximumResults: 3)
+    let results = try await DuckDuckGoSearchProvider(fetcher: fetcher).search(query: "swift", maximumResults: 1)
 
     #expect(results.count == 1)
     #expect(results[0].url.absoluteString == "https://example.com/source")
@@ -218,6 +219,20 @@ import Testing
 
     #expect(results.map(\.title) == ["Direct result"])
     #expect(results.map(\.url.absoluteString) == ["https://example.com/direct"])
+}
+
+@Test func fixedSearchProviderFiltersInsecureResultURLs() async throws {
+    let instantAnswer = #"{"AbstractText":"","Heading":"","Results":[{"Text":"Insecure result","FirstURL":"http://example.com/direct"}],"RelatedTopics":[]}"#
+    let fetcher = SequenceWebFetcher(responses: [
+        WebFetchResponse(finalURL: URL(string: "https://api.duckduckgo.com/")!, mimeType: "application/json", data: Data(instantAnswer.utf8)),
+        WebFetchResponse(finalURL: URL(string: "https://html.duckduckgo.com/html/")!, mimeType: "text/html", data: Data()),
+    ])
+
+    let results = try await DuckDuckGoSearchProvider(fetcher: fetcher).search(
+        query: "insecure", maximumResults: 3
+    )
+
+    #expect(results.isEmpty)
 }
 
 @Test func fixedSearchProviderFallsBackToBoundedHTMLResultsForEmptyInstantAnswer() async throws {
@@ -435,28 +450,58 @@ import Testing
     #expect(!output.contains("steal()"))
 }
 
-@Test func webFetchEnforcesMIMEAndSizeAgainstInjectedClients() async {
+@Test func webFetchEnforcesMIMEAndSizeAgainstInjectedClients() async throws {
     let badMIME = WebFetchResponse(
         finalURL: URL(string: "https://example.com/file")!,
         mimeType: "application/octet-stream",
         data: Data([0, 1])
     )
-    await #expect(throws: WebToolError.unsupportedMIMEType("application/octet-stream")) {
-        try await WebFetchTool(fetcher: StubWebFetcher(response: badMIME)).call(
-            arguments: WebFetchArguments(url: "https://example.com/file")
-        )
-    }
+    let mimeOutput = try await WebFetchTool(fetcher: StubWebFetcher(response: badMIME)).call(
+        arguments: WebFetchArguments(url: "https://example.com/file")
+    )
+    #expect(mimeOutput.contains("<web_fetch_status outcome=\"unsupported_mime\""))
+    #expect(mimeOutput.contains("https://example.com/file"))
+    #expect(mimeOutput.contains("application/octet-stream"))
 
     let oversized = WebFetchResponse(
         finalURL: URL(string: "https://example.com/large")!,
         mimeType: "text/plain",
         data: Data(repeating: 65, count: 5)
     )
-    await #expect(throws: WebToolError.responseTooLarge(maximumBytes: 4)) {
-        try await WebFetchTool(fetcher: StubWebFetcher(response: oversized), maximumBytes: 4).call(
-            arguments: WebFetchArguments(url: "https://example.com/large")
-        )
+    let sizeOutput = try await WebFetchTool(fetcher: StubWebFetcher(response: oversized), maximumBytes: 4).call(
+        arguments: WebFetchArguments(url: "https://example.com/large")
+    )
+    #expect(sizeOutput.contains("<web_fetch_status outcome=\"too_large\""))
+    #expect(sizeOutput.contains("4 bytes"))
+}
+
+@Test func webFetchReportsHTTPAndEmptyPagesWithoutThrowing() async throws {
+    let blocked = WebFetchResponse(
+        finalURL: URL(string: "https://reddit.com/r/localLLaMA")!,
+        mimeType: "text/html",
+        data: Data("<html><script>void 0</script></html>".utf8)
+    )
+    let empty = try await WebFetchTool(fetcher: StubWebFetcher(response: blocked)).call(
+        arguments: WebFetchArguments(url: "https://reddit.com/r/localLLaMA")
+    )
+    #expect(empty.contains("<web_fetch_status outcome=\"empty\""))
+    #expect(empty.contains("readable text"))
+
+    let privateURL = try await WebFetchTool(fetcher: StubWebFetcher(response: blocked)).call(
+        arguments: WebFetchArguments(url: "https://127.0.0.1/secret")
+    )
+    #expect(privateURL.contains("<web_fetch_status outcome=\"disallowed_host\""))
+    #expect(privateURL.contains("not public"))
+}
+
+@Test func webFetchCancellationStillAborts() async throws {
+    let tool = WebFetchTool(fetcher: HangingWebFetcher())
+    let task = Task {
+        try await tool.call(arguments: WebFetchArguments(url: "https://example.com/"))
     }
+    try await Task.sleep(for: .milliseconds(20))
+    task.cancel()
+    await #expect(throws: CancellationError.self) { try await task.value }
 }
 
 @Test func documentDraftStaysInMemoryAndEmitsAnArtifact() async throws {
@@ -557,6 +602,13 @@ private struct StubWebFetcher: WebFetching {
 
     func fetch(url: URL, maximumBytes: Int, allowedMIMETypes: Set<String>) async throws -> WebFetchResponse {
         response
+    }
+}
+
+private struct HangingWebFetcher: WebFetching {
+    func fetch(url: URL, maximumBytes: Int, allowedMIMETypes: Set<String>) async throws -> WebFetchResponse {
+        try await Task.sleep(for: .seconds(30))
+        throw WebToolError.invalidStatus(0)
     }
 }
 
