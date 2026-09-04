@@ -1681,6 +1681,9 @@ final class AppModel {
         if description.localizedCaseInsensitiveContains("parse generated content") {
             return "The model produced an incomplete response. Please try again."
         }
+        if description.localizedCaseInsensitiveContains("Core AI cache is unavailable") {
+            return description
+        }
         return "The request could not be completed. Please try again."
     }
 

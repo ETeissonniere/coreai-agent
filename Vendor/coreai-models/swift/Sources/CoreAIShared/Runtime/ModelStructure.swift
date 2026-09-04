@@ -133,6 +133,18 @@ public struct PreparedModel: Sendable {
     ) async throws -> PreparedModel {
         CLILogger.log("PreparedModelAsset: Preparing \(url.lastPathComponent)")
 
+        let cacheURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appending(path: "coreai-cache", directoryHint: .isDirectory)
+        do {
+            try FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
+        } catch {
+            throw NSError(
+                domain: "CoreAIShared.PreparedModel", code: 1,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Core AI cache is unavailable at \(cacheURL.path): \(error.localizedDescription)"]
+            )
+        }
+
         // Probe structure before specializing so we can pick the right compute-unit preference.
         let probedStructure = probeStructure(at: url)
         CLILogger.log("  - Probed structure: \(probedStructure.description)")
