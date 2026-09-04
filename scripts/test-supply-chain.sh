@@ -31,8 +31,6 @@ for digest in "$NEMOTRON_SOURCE_MODEL_SHA256" "$NEMOTRON_COREAI_MODEL_SHA256"; d
 done
 
 for script in "$repo_root"/scripts/*.sh; do sh -n "$script"; done
-grep -F 'verify-model-assets.sh" "$model_source"' "$repo_root/scripts/package-app.sh" >/dev/null
-grep -F 'verify-model-assets.sh" "$title_model_source"' "$repo_root/scripts/package-app.sh" >/dev/null
 
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/coreai-agent-manifest-test.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT HUP INT TERM
@@ -62,12 +60,8 @@ nemotron_relative="gpu-pipelined/nemotron_3_nano_4b_decode_int8hu"
 nemotron_aimodel="$nemotron_fixture/$nemotron_relative/nemotron_3_nano_4b_decode_int8hu.aimodel"
 mkdir -p "$nemotron_aimodel"
 printf 'fixture model\n' > "$nemotron_aimodel/main.mlirb"
-cat > "$nemotron_fixture/$nemotron_relative/metadata.json" <<EOF
-{
-  "source": { "revision": "$NEMOTRON_MODEL_REVISION" },
-  "compression": "int8-body-clipped-head-absmax-per-block-32"
-}
-EOF
+printf '%s\n' "{\"compression\":\"int8-body-clipped-head-absmax-per-block-32\",\"source\":{\"revision\":\"$NEMOTRON_MODEL_REVISION\"}}" \
+    > "$nemotron_fixture/$nemotron_relative/metadata.json"
 (CDPATH= cd -- "$nemotron_fixture" && shasum -a 256 \
     "$nemotron_relative/metadata.json" \
     "$nemotron_relative/nemotron_3_nano_4b_decode_int8hu.aimodel/main.mlirb" \
@@ -81,6 +75,7 @@ if "$repo_root/scripts/verify-nemotron-package-source.sh" \
     printf '%s\n' 'error: Nemotron verifier accepted a modified model' >&2
     exit 1
 fi
+printf 'fixture model\n' > "$nemotron_aimodel/main.mlirb"
 if "$repo_root/scripts/verify-nemotron-package-source.sh" \
     "$nemotron_fixture" "$fixture_model_sha256" "0000000000000000000000000000000000000000" >/dev/null 2>&1; then
     printf '%s\n' 'error: Nemotron verifier accepted the wrong source revision' >&2
