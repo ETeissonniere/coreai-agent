@@ -132,7 +132,8 @@ struct TaskInspectorView: View {
                 InspectorGroup("Performance") {
                     if let metrics = model.lastMetrics {
                         LabeledContent("Generated", value: "\(metrics.generatedTokens) tokens")
-                        LabeledContent("Decode", value: "\(String(format: "%.1f", metrics.tokensPerSecond)) tok/s")
+                        LabeledContent("Prefill", value: "\(String(format: "%.1f", metrics.prefillTokensPerSecond)) tok/s")
+                        LabeledContent("Decode", value: "\(String(format: "%.1f", metrics.decodeTokensPerSecond)) tok/s")
                         LabeledContent("Reasoning", value: "\(metrics.reasoningTokens) tokens")
                     } else { Text("Performance statistics appear after a response.").foregroundStyle(.secondary) }
                 }

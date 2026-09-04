@@ -75,7 +75,7 @@ public struct CoreAILanguageModel: LanguageModel {
     private let additionalEosTokenIds: [Int32]
     private let chatTemplateOverride: String?
     private let toolCallTextCache: ToolCallTextCache
-    public let decodeMetrics: DecodeMetrics
+    public let generationThroughput: GenerationThroughput
 
     // MARK: - Protocol Requirements
 
@@ -101,7 +101,7 @@ public struct CoreAILanguageModel: LanguageModel {
             additionalEosTokenIds: additionalEosTokenIds,
             chatTemplateOverride: chatTemplateOverride,
             toolCallTextCache: toolCallTextCache,
-            decodeMetrics: decodeMetrics
+            generationThroughput: generationThroughput
         )
     }
 
@@ -154,7 +154,7 @@ public struct CoreAILanguageModel: LanguageModel {
         self.additionalEosTokenIds = additionalEosTokenIds
         self.chatTemplateOverride = chatTemplateOverride
         self.toolCallTextCache = ToolCallTextCache()
-        self.decodeMetrics = DecodeMetrics()
+        self.generationThroughput = GenerationThroughput()
         self.supportsToolCalling = CoreAIExecutor.detectToolCallMarkers(using: tokenizer) != nil
         self.supportsReasoning =
             tokenizer.convertTokenToId("<think>") != nil
@@ -175,7 +175,7 @@ public struct CoreAILanguageModel: LanguageModel {
             fileprivate let additionalEosTokenIds: [Int32]
             fileprivate let chatTemplateOverride: String?
             fileprivate let toolCallTextCache: ToolCallTextCache
-            fileprivate let decodeMetrics: DecodeMetrics
+            fileprivate let generationThroughput: GenerationThroughput
 
             public static func == (lhs: Configuration, rhs: Configuration) -> Bool {
                 lhs.modelIdentifier == rhs.modelIdentifier
@@ -213,7 +213,7 @@ public struct CoreAILanguageModel: LanguageModel {
         private let toolCallMarkers: (open: String, close: String)?
         private let chatTemplateOverride: String?
         private let toolCallTextCache: ToolCallTextCache
-        private let decodeMetrics: DecodeMetrics
+        private let generationThroughput: GenerationThroughput
 
         // MARK: - Initialization
 
@@ -227,7 +227,7 @@ public struct CoreAILanguageModel: LanguageModel {
             self.toolCallMarkers = Self.detectToolCallMarkers(using: configuration.tokenizer)
             self.chatTemplateOverride = configuration.chatTemplateOverride
             self.toolCallTextCache = configuration.toolCallTextCache
-            self.decodeMetrics = configuration.decodeMetrics
+            self.generationThroughput = configuration.generationThroughput
 
             // Build the full set of EOS-like token IDs
             var eos = Set<Int32>()
@@ -401,6 +401,8 @@ public struct CoreAILanguageModel: LanguageModel {
             reasoningMode: ReasoningMode,
             channel: LanguageModelExecutorGenerationChannel
         ) async throws {
+            let clock = ContinuousClock()
+            let prefillStartedAt = clock.now
             let tokenStream = try await engine.generate(
                 with: promptTokens.map(Int32.init),
                 samplingConfiguration: samplingConfig,
@@ -441,8 +443,8 @@ public struct CoreAILanguageModel: LanguageModel {
             }
             var generatedTokenCount: Int = 0
             var reasoningTokenCount: Int = 0
-            let clock = ContinuousClock()
             var firstGeneratedTokenAt: ContinuousClock.Instant?
+            var lastGeneratedTokenAt: ContinuousClock.Instant?
 
             for try await output in tokenStream {
                 // Prefix resolution completes before the first output. Capture
@@ -459,6 +461,7 @@ public struct CoreAILanguageModel: LanguageModel {
 
                 generatedTokens.append(token)
                 firstGeneratedTokenAt = firstGeneratedTokenAt ?? generatedTokenAt
+                lastGeneratedTokenAt = generatedTokenAt
                 tokenStep += 1
                 generatedTokenCount += 1
 
@@ -509,11 +512,13 @@ public struct CoreAILanguageModel: LanguageModel {
 
             let resolvedCachedTokenCount = cachedTokenCount
                 ?? min(promptTokens.count, engine.lastPrefixHitCount)
-            if toolCallParser?.emittedToolCall != true,
-               let firstGeneratedTokenAt {
-                await decodeMetrics.record(
-                    tokens: generatedTokenCount,
-                    duration: firstGeneratedTokenAt.duration(to: clock.now)
+            if let firstGeneratedTokenAt {
+                await generationThroughput.record(
+                    promptTokens: max(0, promptTokens.count - resolvedCachedTokenCount),
+                    prefillDuration: prefillStartedAt.duration(to: firstGeneratedTokenAt),
+                    generatedTokens: generatedTokenCount,
+                    decodeDuration: firstGeneratedTokenAt.duration(to: lastGeneratedTokenAt ?? firstGeneratedTokenAt),
+                    emittedToolCall: toolCallParser?.emittedToolCall == true
                 )
             }
 

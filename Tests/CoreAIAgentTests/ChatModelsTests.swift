@@ -40,10 +40,12 @@ import Testing
         timeToFirstToken: .seconds(2),
         elapsed: .seconds(10),
         decodeTokens: 28,
-        decodeDuration: .seconds(4)
+        decodeDuration: .seconds(4),
+        prefillTokens: 60,
+        prefillDuration: .seconds(3)
     )
-    #expect(metrics.prefillTokensPerSecond == 40)
-    #expect(metrics.tokensPerSecond == 7)
+    #expect(metrics.prefillTokensPerSecond == 20)
+    #expect(metrics.decodeTokensPerSecond == 7)
     #expect(metrics.contextTokens == 140)
 }
 
@@ -58,7 +60,26 @@ import Testing
         decodeTokens: 28,
         decodeDuration: .zero
     )
-    #expect(metrics.tokensPerSecond == 0)
+    #expect(metrics.decodeTokensPerSecond == 0)
+}
+
+@Test func legacyGenerationMetricsUseWallClockFallback() throws {
+    let metrics = GenerationMetrics(
+        promptTokens: 100, cachedTokens: 20, generatedTokens: 40, reasoningTokens: 8,
+        timeToFirstToken: .seconds(2), elapsed: .seconds(6)
+    )
+    var json = try #require(
+        JSONSerialization.jsonObject(with: JSONEncoder().encode(metrics)) as? [String: Any]
+    )
+    json.removeValue(forKey: "decodeTokens")
+    json.removeValue(forKey: "decodeDuration")
+    json.removeValue(forKey: "prefillTokens")
+    json.removeValue(forKey: "prefillDuration")
+    let restored = try JSONDecoder().decode(
+        GenerationMetrics.self, from: JSONSerialization.data(withJSONObject: json)
+    )
+    #expect(restored.prefillTokensPerSecond == 40)
+    #expect(restored.decodeTokensPerSecond == 10)
 }
 
 @Test func modelProfilesExposeTheAcceptedRuntimeMetadata() {

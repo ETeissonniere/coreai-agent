@@ -109,3 +109,24 @@ struct PerformanceMetricsTests {
         #expect((stats?.totalSeconds ?? 0) > 0)
     }
 }
+
+@Suite("GenerationThroughput")
+struct GenerationThroughputTests {
+    @Test("Separates prefill and answer decode while excluding tool-call decode")
+    func separatesGenerationPhases() async {
+        let throughput = GenerationThroughput()
+        await throughput.record(
+            promptTokens: 100, prefillDuration: .seconds(2), generatedTokens: 11,
+            decodeDuration: .seconds(1), emittedToolCall: true
+        )
+        await throughput.record(
+            promptTokens: 40, prefillDuration: .seconds(1), generatedTokens: 21,
+            decodeDuration: .seconds(2), emittedToolCall: false
+        )
+        let snapshot = await throughput.snapshot()
+        #expect(snapshot.prefillTokens == 140)
+        #expect(snapshot.prefillSeconds == 3)
+        #expect(snapshot.decodeTokens == 20)
+        #expect(snapshot.decodeSeconds == 2)
+    }
+}

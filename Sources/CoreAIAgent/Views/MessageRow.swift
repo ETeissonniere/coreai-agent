@@ -52,7 +52,7 @@ struct MessageRow: View {
                         .buttonStyle(.bordered)
                 }
                 if let metrics = message.metrics {
-                    Text("\(metrics.generatedTokens) tokens · \(metrics.tokensPerSecond, format: .number.precision(.fractionLength(1))) tok/s · TTFT \(metrics.timeToFirstToken.formatted(.time(pattern: .minuteSecond(padMinuteToLength: 1))))")
+                    Text("\(metrics.generatedTokens) tokens · prefill \(metrics.prefillTokensPerSecond, format: .number.precision(.fractionLength(1))) tok/s · decode \(metrics.decodeTokensPerSecond, format: .number.precision(.fractionLength(1))) tok/s · TTFT \(metrics.timeToFirstToken.formatted(.time(pattern: .minuteSecond(padMinuteToLength: 1))))")
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
             }
