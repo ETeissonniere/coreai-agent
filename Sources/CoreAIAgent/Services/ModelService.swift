@@ -2,23 +2,10 @@ import Foundation
 import CoreAIAgentRuntime
 
 protocol ModelServing: AnyObject, Sendable {
-    func load(resourcesAt url: URL) async throws
     func load(resourcesAt url: URL, for profile: ModelProfile) async throws
-    func generate(conversationID: UUID, prompt: String) -> AsyncThrowingStream<GenerationEvent, Error>
-    func generate(
-        conversationID: UUID,
-        prompt: String,
-        enabledSkillIDs: Set<String>
-    ) -> AsyncThrowingStream<GenerationEvent, Error>
     func generate(request: ModelGenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error>
     func cancel() async
     func resolveApproval(id: UUID, approved: Bool) async -> Bool
-}
-
-extension ModelServing {
-    func load(resourcesAt url: URL, for profile: ModelProfile) async throws {
-        try await load(resourcesAt: url)
-    }
 }
 
 enum GenerationEvent: Sendable {

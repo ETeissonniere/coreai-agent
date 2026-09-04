@@ -391,17 +391,9 @@ import Testing
 }
 
 private final class HarnessModelServiceStub: ModelServing, @unchecked Sendable {
-    func load(resourcesAt url: URL) async throws {}
+    func load(resourcesAt url: URL, for profile: ModelProfile) async throws {}
 
-    func generate(conversationID: UUID, prompt: String) -> AsyncThrowingStream<GenerationEvent, Error> {
-        generate(conversationID: conversationID, prompt: prompt, enabledSkillIDs: [])
-    }
-
-    func generate(
-        conversationID: UUID,
-        prompt: String,
-        enabledSkillIDs: Set<String>
-    ) -> AsyncThrowingStream<GenerationEvent, Error> {
+    func generate(request: ModelGenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         AsyncThrowingStream { continuation in
             continuation.yield(.context(ContextStatus(
                 usedTokens: 3_500, activeBudget: 3_000, state: .compacting,
@@ -474,35 +466,12 @@ private final class HarnessModelServiceStub: ModelServing, @unchecked Sendable {
         }
     }
 
-    func generate(request: ModelGenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
-        generate(
-            conversationID: request.conversationID,
-            prompt: request.prompt,
-            enabledSkillIDs: request.enabledSkillIDs
-        )
-    }
-
     func cancel() async {}
     func resolveApproval(id: UUID, approved: Bool) async -> Bool { true }
 }
 
 private final class AttemptBoundaryModelServiceStub: ModelServing, @unchecked Sendable {
-    func load(resourcesAt url: URL) async throws {}
-
-    func generate(conversationID: UUID, prompt: String) -> AsyncThrowingStream<GenerationEvent, Error> {
-        generate(conversationID: conversationID, prompt: prompt, enabledSkillIDs: [])
-    }
-
-    func generate(
-        conversationID: UUID,
-        prompt: String,
-        enabledSkillIDs: Set<String>
-    ) -> AsyncThrowingStream<GenerationEvent, Error> {
-        generate(request: ModelGenerationRequest(
-            conversationID: conversationID, prompt: prompt, enabledSkillIDs: enabledSkillIDs,
-            history: [], compaction: nil
-        ))
-    }
+    func load(resourcesAt url: URL, for profile: ModelProfile) async throws {}
 
     func generate(request: ModelGenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -549,22 +518,7 @@ private actor ApprovalBrokerModelServiceStub: ModelServing {
     private(set) var resolvedApproved: Bool?
     private let approvalID = UUID()
 
-    func load(resourcesAt url: URL) async throws {}
-
-    nonisolated func generate(conversationID: UUID, prompt: String) -> AsyncThrowingStream<GenerationEvent, Error> {
-        generate(conversationID: conversationID, prompt: prompt, enabledSkillIDs: [])
-    }
-
-    nonisolated func generate(
-        conversationID: UUID,
-        prompt: String,
-        enabledSkillIDs: Set<String>
-    ) -> AsyncThrowingStream<GenerationEvent, Error> {
-        generate(request: ModelGenerationRequest(
-            conversationID: conversationID, prompt: prompt, enabledSkillIDs: enabledSkillIDs,
-            history: [], compaction: nil
-        ))
-    }
+    func load(resourcesAt url: URL, for profile: ModelProfile) async throws {}
 
     nonisolated func generate(request: ModelGenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         AsyncThrowingStream { continuation in

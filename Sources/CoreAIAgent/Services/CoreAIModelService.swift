@@ -69,10 +69,6 @@ actor CoreAIModelService: ModelServing {
         setenv("COREAI_CHUNK_THRESHOLD", "1", 1)
     }
 
-    nonisolated func load(resourcesAt url: URL) async throws {
-        try await load(resourcesAt: url, for: .deep)
-    }
-
     nonisolated func load(resourcesAt url: URL, for profile: ModelProfile) async throws {
         let metadata = url.appending(path: "metadata.json")
         let tokenizer = url.appending(path: "tokenizer/tokenizer.json")
@@ -98,27 +94,6 @@ actor CoreAIModelService: ModelServing {
         // before it can finish a tool call and user-facing response.
         outputReserve = Self.responseTokenReserve(for: maxContextLength)
         sessions.removeAll()
-    }
-
-    nonisolated func generate(
-        conversationID: UUID,
-        prompt: String
-    ) -> AsyncThrowingStream<GenerationEvent, Error> {
-        generate(conversationID: conversationID, prompt: prompt, enabledSkillIDs: [])
-    }
-
-    nonisolated func generate(
-        conversationID: UUID,
-        prompt: String,
-        enabledSkillIDs: Set<String>
-    ) -> AsyncThrowingStream<GenerationEvent, Error> {
-        generate(request: ModelGenerationRequest(
-            conversationID: conversationID,
-            prompt: prompt,
-            enabledSkillIDs: enabledSkillIDs,
-            history: [],
-            compaction: nil
-        ))
     }
 
     nonisolated func generate(request: ModelGenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
@@ -763,23 +738,6 @@ actor CoreAIModelService: ModelServing {
             maximumTokens: statistics.maximumTokens,
             reusedPrefixTokens: statistics.reusedPrefixTokens
         )
-    }
-
-    private static func conversationText(_ entry: Transcript.Entry) -> String? {
-        switch entry {
-        case .prompt(let prompt):
-            return "User: \(text(in: prompt.segments))"
-        case .response(let response):
-            return "Assistant: \(text(in: response.segments))"
-        case .toolCalls(let calls):
-            return calls.map {
-                "Assistant tool call \($0.id) to \($0.toolName): \($0.arguments.jsonString)"
-            }.joined(separator: "\n")
-        case .toolOutput(let output):
-            return "Tool output \(output.id) from \(output.toolName): \(text(in: output.segments))"
-        default:
-            return nil
-        }
     }
 
     private static func text(in segments: [Transcript.Segment]) -> String {
