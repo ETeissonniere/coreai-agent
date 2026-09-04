@@ -15,10 +15,11 @@ import Testing
     let model = AppModel(
         modelService: HarnessModelServiceStub(), appStateStore: appStore,
         harnessStore: JSONHarnessStore(rootURL: root.appending(path: "Harness")),
-        titleService: TitleGeneratorStub(result: .generated("Core AI Research"))
+        titleService: TitleGeneratorStub(result: .generated("Core AI Research")),
+        modelResourceURLs: [.deep: root.appending(path: "deep-model")]
     )
     await model.waitForHarnessBootstrap()
-    model.modelPhase = .ready
+    try await waitUntil { model.isSelectedModelReady }
     model.draft = "Research the latest Core AI APIs"
     model.send()
 
@@ -38,10 +39,11 @@ import Testing
     let model = AppModel(
         modelService: HarnessModelServiceStub(), appStateStore: appStore,
         harnessStore: JSONHarnessStore(rootURL: root.appending(path: "Harness")),
-        titleService: TitleGeneratorStub(result: .fallback(.assetMissing))
+        titleService: TitleGeneratorStub(result: .fallback(.assetMissing)),
+        modelResourceURLs: [.deep: root.appending(path: "deep-model")]
     )
     await model.waitForHarnessBootstrap()
-    model.modelPhase = .ready
+    try await waitUntil { model.isSelectedModelReady }
     let prompt = "Research the latest Core AI APIs and explain the agent runtime"
     model.draft = prompt
     model.send()
@@ -69,10 +71,11 @@ import Testing
     ))
     let model = AppModel(
         modelService: HarnessModelServiceStub(), appStateStore: appStore,
-        harnessStore: JSONHarnessStore(rootURL: root.appending(path: "Harness"))
+        harnessStore: JSONHarnessStore(rootURL: root.appending(path: "Harness")),
+        modelResourceURLs: [.deep: root.appending(path: "deep-model")]
     )
     await model.waitForHarnessBootstrap()
-    model.modelPhase = .ready
+    try await waitUntil { model.isSelectedModelReady }
     model.runStatusByConversation[conversation.id] = .failed
     model.recoveredConversationIDs.insert(conversation.id)
 
@@ -101,10 +104,11 @@ import Testing
     let model = AppModel(
         modelService: HarnessModelServiceStub(),
         appStateStore: appStore,
-        harnessStore: harnessStore
+        harnessStore: harnessStore,
+        modelResourceURLs: [.deep: root.appending(path: "deep-model")]
     )
     await model.waitForHarnessBootstrap()
-    model.modelPhase = .ready
+    try await waitUntil { model.isSelectedModelReady }
     model.toggleSkill("web-research")
     model.draft = "Research the latest Core AI APIs"
     model.send()
@@ -160,10 +164,11 @@ import Testing
     let harnessStore = JSONHarnessStore(rootURL: root.appending(path: "Harness"))
     let model = AppModel(
         modelService: AttemptBoundaryModelServiceStub(), appStateStore: appStore,
-        harnessStore: harnessStore
+        harnessStore: harnessStore,
+        modelResourceURLs: [.deep: root.appending(path: "deep-model")]
     )
     await model.waitForHarnessBootstrap()
-    model.modelPhase = .ready
+    try await waitUntil { model.isSelectedModelReady }
     model.draft = "Search twice"
     model.send()
 
@@ -207,7 +212,8 @@ import Testing
     var model: AppModel? = AppModel(
         modelService: HarnessModelServiceStub(),
         appStateStore: appStore,
-        harnessStore: harnessStore
+        harnessStore: harnessStore,
+        modelResourceURLs: [.deep: root.appending(path: "deep-model")]
     )
     await model?.waitForHarnessBootstrap()
     model?.toggleSkill("document-authoring")
@@ -236,7 +242,8 @@ import Testing
     let restored = AppModel(
         modelService: HarnessModelServiceStub(),
         appStateStore: appStore,
-        harnessStore: JSONHarnessStore(rootURL: harnessURL)
+        harnessStore: JSONHarnessStore(rootURL: harnessURL),
+        modelResourceURLs: [.deep: root.appending(path: "deep-model")]
     )
     await restored.waitForHarnessBootstrap()
 
@@ -253,7 +260,7 @@ import Testing
     restored.decideApproval(approval.id, in: conversation.id, decision: .allowedOnce)
     restored.decideApproval(approval.id, in: conversation.id, decision: .denied)
     #expect(restored.approvalsByConversation[conversation.id]?.first?.decision == .denied)
-    restored.modelPhase = .ready
+    try await waitUntil { restored.isSelectedModelReady }
     restored.draft = "Continue in a replacement run"
     restored.send()
     try await waitUntil { restored.modelPhase == .ready && restored.runStatusByConversation[conversation.id] == .completed }

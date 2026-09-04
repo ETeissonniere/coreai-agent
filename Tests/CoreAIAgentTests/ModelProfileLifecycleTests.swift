@@ -34,6 +34,189 @@ import Testing
 }
 
 @MainActor
+@Test func selectingAnotherProfileWhileStartupLoadIsRunningQueuesTheLatestChoice() async throws {
+    let root = try makeProfileTestRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let conversation = Conversation()
+    let store = JSONAppStateStore(fileURL: root.appending(path: "state.json"))
+    try store.save(PersistedAppState(
+        conversations: [conversation], folders: [], openConversationIDs: [conversation.id],
+        selectedConversationID: conversation.id
+    ))
+    let service = ProfileModelServiceStub(delayedProfiles: [.deep])
+    let model = AppModel(
+        modelService: service,
+        appStateStore: store,
+        harnessStore: JSONHarnessStore(rootURL: root.appending(path: "harness")),
+        modelResourceURLs: [.deep: root.appending(path: "deep"), .fast: root.appending(path: "fast")]
+    )
+
+    model.selectModelProfile(.fast)
+
+    #expect(model.selectedModelProfile == .fast)
+    #expect(model.loadingModelProfile == .fast)
+    try await waitForProfile { model.isSelectedModelReady }
+    let loadedProfiles = await service.loadedProfiles
+    #expect(loadedProfiles.last == .fast)
+    #expect(loadedProfiles.count <= 2)
+    #expect(model.modelSelectionNotice == nil)
+}
+
+@MainActor
+@Test func returningToTheLoadingProfileDoesNotLoadItTwice() async throws {
+    let root = try makeProfileTestRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let conversation = Conversation()
+    let store = JSONAppStateStore(fileURL: root.appending(path: "state.json"))
+    try store.save(PersistedAppState(
+        conversations: [conversation], folders: [], openConversationIDs: [conversation.id],
+        selectedConversationID: conversation.id
+    ))
+    let service = ProfileModelServiceStub(delayedProfiles: [.deep])
+    let model = AppModel(
+        modelService: service,
+        appStateStore: store,
+        harnessStore: JSONHarnessStore(rootURL: root.appending(path: "harness")),
+        modelResourceURLs: [.deep: root.appending(path: "deep"), .fast: root.appending(path: "fast")]
+    )
+
+    model.selectModelProfile(.fast)
+    model.selectModelProfile(.deep)
+
+    try await waitForProfile { model.isSelectedModelReady }
+    #expect(await service.loadedProfiles == [.deep])
+}
+
+@MainActor
+@Test func submittingDuringStartupLoadRunsOnceWhenTheModelIsReady() async throws {
+    let root = try makeProfileTestRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let conversation = Conversation(title: "Existing task")
+    let store = JSONAppStateStore(fileURL: root.appending(path: "state.json"))
+    try store.save(PersistedAppState(
+        conversations: [conversation], folders: [], openConversationIDs: [conversation.id],
+        selectedConversationID: conversation.id
+    ))
+    let model = AppModel(
+        modelService: ProfileModelServiceStub(delayedProfiles: [.deep]),
+        appStateStore: store,
+        harnessStore: JSONHarnessStore(rootURL: root.appending(path: "harness")),
+        modelResourceURLs: [.deep: root.appending(path: "deep")]
+    )
+    model.draft = "Explain the loading state"
+
+    model.send()
+
+    #expect(model.isSelectedSubmissionQueued)
+    #expect(model.draft == "Explain the loading state")
+    model.persistImmediately()
+    #expect(try store.load()?.queuedSubmissions?[conversation.id]?.prompt == "Explain the loading state")
+    model.send()
+    #expect(model.draft == "Explain the loading state")
+    try await waitForProfile { model.modelPhase == .ready && model.conversations[0].messages.count == 2 }
+    #expect(model.conversations[0].messages.map(\.text).first == "Explain the loading state")
+    #expect(!model.isSelectedSubmissionQueued)
+}
+
+@MainActor
+@Test func failedQueuedProfileDoesNotSubmitOnTheFallbackModel() async throws {
+    let root = try makeProfileTestRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let conversation = Conversation(title: "Existing task")
+    let store = JSONAppStateStore(fileURL: root.appending(path: "state.json"))
+    try store.save(PersistedAppState(
+        conversations: [conversation], folders: [], openConversationIDs: [conversation.id],
+        selectedConversationID: conversation.id
+    ))
+    let model = AppModel(
+        modelService: ProfileModelServiceStub(failingProfiles: [.fast], delayedProfiles: [.fast]),
+        appStateStore: store,
+        harnessStore: JSONHarnessStore(rootURL: root.appending(path: "harness")),
+        modelResourceURLs: [.deep: root.appending(path: "deep"), .fast: root.appending(path: "fast")]
+    )
+    try await waitForProfile { model.isSelectedModelReady }
+    model.selectModelProfile(.fast)
+    model.draft = "Keep this on the requested model"
+
+    model.send()
+
+    try await waitForProfile { model.modelPhase == .ready }
+    #expect(model.conversations[0].messages.isEmpty)
+    #expect(model.draft == "Keep this on the requested model")
+    #expect(!model.isSelectedSubmissionQueued)
+    #expect(model.selectedModelProfile == .deep)
+}
+
+@MainActor
+@Test func leavingTheActiveTaskCancelsItsDeferredSendWithoutLosingTheDraft() async throws {
+    let root = try makeProfileTestRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let first = Conversation(title: "First")
+    let second = Conversation(title: "Second")
+    let store = JSONAppStateStore(fileURL: root.appending(path: "state.json"))
+    try store.save(PersistedAppState(
+        conversations: [first, second], folders: [], openConversationIDs: [first.id, second.id],
+        selectedConversationID: first.id
+    ))
+    let model = AppModel(
+        modelService: ProfileModelServiceStub(delayedProfiles: [.deep]),
+        appStateStore: store,
+        harnessStore: JSONHarnessStore(rootURL: root.appending(path: "harness")),
+        modelResourceURLs: [.deep: root.appending(path: "deep")]
+    )
+    model.draft = "Do not lose this"
+    model.send()
+
+    model.selectConversation(second.id)
+
+    #expect(!model.isSelectedSubmissionQueued)
+    model.selectConversation(first.id)
+    #expect(model.draft == "Do not lose this")
+    #expect(!model.isSelectedSubmissionQueued)
+    #expect(model.conversations[0].messages.isEmpty)
+}
+
+@MainActor
+@Test func tabBulkCloseActionsPreserveOrderAndChooseAVisibleTab() throws {
+    let root = try makeProfileTestRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let conversations = [Conversation(title: "One"), Conversation(title: "Two"), Conversation(title: "Three")]
+    let store = JSONAppStateStore(fileURL: root.appending(path: "state.json"))
+    try store.save(PersistedAppState(
+        conversations: conversations, folders: [], openConversationIDs: conversations.map(\.id),
+        selectedConversationID: conversations[2].id
+    ))
+    let model = AppModel(
+        modelService: ProfileModelServiceStub(),
+        appStateStore: store,
+        harnessStore: JSONHarnessStore(rootURL: root.appending(path: "harness")),
+        modelResourceURLs: [:]
+    )
+
+    model.selectConversation(conversations[0].id)
+    model.toggleSkill("web-research")
+    model.selectConversation(conversations[1].id)
+    model.toggleSkill("document-authoring")
+
+    model.closeTab(conversations[1].id)
+    #expect(model.selectedConversationID == conversations[2].id)
+    #expect(model.enabledSkillIDs.isEmpty)
+    model.selectConversation(conversations[1].id)
+
+    model.closeTabsToRight(of: conversations[0].id)
+    #expect(model.openConversationIDs == [conversations[0].id])
+    #expect(model.selectedConversationID == conversations[0].id)
+    #expect(model.enabledSkillIDs == ["builtin.web-research"])
+
+    model.selectConversation(conversations[1].id)
+    model.selectConversation(conversations[2].id)
+    model.closeOtherTabs(keeping: conversations[1].id)
+    #expect(model.openConversationIDs == [conversations[1].id])
+    #expect(model.selectedConversationID == conversations[1].id)
+    #expect(model.enabledSkillIDs == ["builtin.document-authoring"])
+}
+
+@MainActor
 @Test func newConversationUsesTheCurrentlySelectedModelProfile() async throws {
     let root = try makeProfileTestRoot()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -177,7 +360,13 @@ import Testing
     let store = JSONAppStateStore(fileURL: root.appending(path: "state.json"))
     try store.save(PersistedAppState(
         conversations: [fast], folders: [], openConversationIDs: [fast.id],
-        selectedConversationID: fast.id
+        selectedConversationID: fast.id,
+        queuedSubmissions: [fast.id: QueuedSubmission(
+            prompt: "Keep this draft",
+            attachments: [],
+            pinnedSkillIDs: [],
+            modelProfile: .fast
+        )]
     ))
     let model = AppModel(
         modelService: ProfileModelServiceStub(),
@@ -188,6 +377,8 @@ import Testing
 
     #expect(model.selectedModelProfile == .deep)
     #expect(model.modelSelectionNotice?.contains("not bundled") == true)
+    #expect(model.draft == "Keep this draft")
+    #expect(!model.isSelectedSubmissionQueued)
 }
 
 private actor ProfileModelServiceStub: ModelServing {
