@@ -25,7 +25,7 @@ enum ModelProfile: String, Codable, CaseIterable, Equatable, Sendable {
         case .fast:
             "Models/Nemotron-3-Nano-4B-CoreAI/gpu-pipelined/nemotron_3_nano_4b_decode_int8hu"
         case .deep:
-            "Models/Qwen3.8-27B-CoreAI/gpu-pipelined/qwen3_8_27b_decode_int4lin"
+            "Models/Qwen3.8-27B-CoreAI/gpu-pipelined/qwen3_8_27b_decode_int4linh8_pf16"
         }
     }
 }

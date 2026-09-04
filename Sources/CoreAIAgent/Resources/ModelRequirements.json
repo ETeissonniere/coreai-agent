@@ -5,6 +5,6 @@
   "minimumOS": "27.0",
   "compression": "4bit",
   "maxContextLength": 131072,
-  "artifact": "ETeissonniere/Qwen3.8-27B-CoreAI-128K/gpu-pipelined/qwen3_8_27b_decode_int4lin",
+  "artifact": "ETeissonniere/Qwen3.8-27B-CoreAI-128K/gpu-pipelined/qwen3_8_27b_decode_int4linh8_pf16",
   "status": "community-coreai-port"
 }

@@ -25,6 +25,6 @@ HF_HOME="$repo_root/.build/huggingface" hf download "$NEMOTRON_COREAI_ARTIFACT_R
     "$NEMOTRON_COREAI_MODEL_SHA256" \
     "$NEMOTRON_MODEL_REVISION"
 
-printf 'Model bundle downloaded to %s/gpu-pipelined/qwen3_8_27b_decode_int4lin\n' "$destination"
+printf 'Model bundle downloaded to %s/gpu-pipelined/qwen3_8_27b_decode_int4linh8_pf16\n' "$destination"
 printf 'Fast model bundle downloaded to %s/gpu-pipelined/nemotron_3_nano_4b_decode_int8hu\n' \
     "$nemotron_destination"

@@ -66,7 +66,6 @@ actor CoreAIModelService: ModelServing {
     ) {
         self.webSearchProvider = webSearchProvider
         self.documentStore = documentStore
-        setenv("COREAI_CHUNK_THRESHOLD", "1", 1)
     }
 
     nonisolated func load(resourcesAt url: URL, for profile: ModelProfile) async throws {
@@ -78,6 +77,7 @@ actor CoreAIModelService: ModelServing {
         }
         let limits = try Self.readContextLimits(from: metadata)
         let loadedModel = try await CoreAILanguageModel(resourcesAt: url)
+        LanguageModelSession(model: loadedModel).prewarm()
         await finishLoading(loadedModel, maxContextLength: limits, profile: profile)
     }
 

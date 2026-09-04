@@ -1459,7 +1459,8 @@ private struct EngineImpl: ~Copyable {
         // Skip prefill entirely if prompt is empty (prefix-cached continuation).
         if !prompt.isEmpty {
             let prefillTokens: ArraySlice<Int32>
-            if prompt.count > config.chunkThreshold || (prefillFunction != nil && prompt.count > 1) {
+            if prompt.count > config.chunkThreshold
+                || (prefillFunction != nil && prompt.count > 1) {
                 prefillTokens = try await processChunkedInput(tokens: prompt)
             } else {
                 let prefillCapacity = max(1, prompt.count)
@@ -1711,6 +1712,12 @@ private struct EngineImpl: ~Copyable {
     mutating func performWarmup(queryLength: Int, samplingConfig: SamplingConfiguration?) async throws {
         let warmupStart = ContinuousClock.now
         let warmupSpan = InstrumentsProfiler.beginWarmup()
+
+        if prefillFunction != nil {
+            try await _encodeChunk(tokens: [Int32](repeating: 1, count: prefillChunkLength))
+            await computeStream.currentWorkCompleted()
+            reset()
+        }
 
         // A single warmup at any shape primes the framework's internal caches
         // (reshape, kernel compilation, state pool). Benchmarks show no benefit

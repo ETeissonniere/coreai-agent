@@ -3,12 +3,13 @@ set -eu
 
 repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 . "$repo_root/scripts/model-sources.env"
+export UV_CACHE_DIR="$repo_root/.build/uv-cache"
 zoo_dir="${COREAI_ZOO_DIR:-$repo_root/.build/coreai-model-zoo}"
 mkdir -p "$repo_root/.build"
 export_worktree="$(mktemp -d "$repo_root/.build/coreai-export.XXXXXX")"
 coreai_dir="$export_worktree/coreai-models"
 trap 'rm -rf "$export_worktree"' EXIT HUP INT TERM
-output_dir="$repo_root/Models/Qwen3.8-27B-CoreAI-128K/gpu-pipelined"
+output_dir="${COREAI_EXPORT_OUTPUT_DIR:-$repo_root/.build/model-candidates/Qwen3.8-27B-CoreAI-128K/gpu-pipelined}"
 checkpoint_dir="$repo_root/.build/checkpoints/Qwen3.8-27B"
 required_kib=$((80 * 1024 * 1024))
 available_kib="$(df -Pk "$repo_root" | awk 'NR == 2 { print $4 }')"
@@ -34,8 +35,8 @@ if [ -n "$(git -C "$zoo_dir" status --porcelain --untracked-files=all)" ]; then
     exit 1
 fi
 
-base_repo="$(awk -F': *' '/^repo:/ { print $2 }' "$zoo_dir/conversion/overlay/BASE")"
-base_commit="$(awk -F': *' '/^commit:/ { print $2 }' "$zoo_dir/conversion/overlay/BASE")"
+base_repo="$(sed -n 's/^repo: //p' "$zoo_dir/conversion/overlay/BASE")"
+base_commit="$(sed -n 's/^commit: //p' "$zoo_dir/conversion/overlay/BASE")"
 test "$base_repo" = "$APPLE_COREAI_REPOSITORY"
 test "$base_commit" = "$APPLE_OVERLAY_BASE_REVISION"
 git clone --no-checkout "$base_repo" "$coreai_dir"
@@ -57,7 +58,20 @@ if [ "$overlay_tree_hash" != "$COREAI_OVERLAY_TREE_SHA256" ]; then
     printf 'error: applied Core AI overlay tree has unexpected SHA-256: %s\n' "$overlay_tree_hash" >&2
     exit 1
 fi
-uv sync --frozen --project "$coreai_dir" --python 3.11
+patch -s "$coreai_dir/python/src/coreai_models/models/macos/qwen3_5.py" \
+    "$repo_root/scripts/patches/qwen3_8_local_checkpoint.patch"
+perl -pi -e 's/coreai-core==1\.0\.0b1/coreai-core==1.0.0b2/; s/coreai-torch==0\.4\.0/coreai-torch==0.4.2/' \
+    "$coreai_dir/python/pyproject.toml"
+uv sync --project "$coreai_dir" --python 3.11 \
+    --upgrade-package coreai-core \
+    --upgrade-package coreai-torch
+patch -s "$coreai_dir/.venv/lib/python3.11/site-packages/coreai_torch/_utils.py" \
+    "$repo_root/scripts/patches/coreai_torch_externalized_dim_min.patch"
+
+exporter_script="$export_worktree/export_qwen3_5_decode_pipelined.py"
+patch -s -o "$exporter_script" \
+    "$zoo_dir/conversion/export_qwen3_5_decode_pipelined.py" \
+    "$repo_root/scripts/patches/qwen3_8_multifunction_prefill.patch"
 
 printf '%s\n' 'Exporting Qwen3.8-27B INT4 with a 131,072-token dynamic KV bound.'
 printf '%s\n' 'This downloads the pinned BF16 checkpoint and may take hours.'
@@ -65,13 +79,13 @@ mkdir -p "$checkpoint_dir"
 HF_HOME="$repo_root/.build/huggingface" hf download "$QWEN_MODEL_REPOSITORY" \
     --revision "$QWEN_MODEL_REVISION" \
     --local-dir "$checkpoint_dir"
-"$coreai_dir/.venv/bin/python" \
-    "$zoo_dir/conversion/export_qwen3_5_decode_pipelined.py" \
-    int4lin \
+PYTHONPATH="$zoo_dir/conversion" "$coreai_dir/.venv/bin/python" \
+    "$export_worktree/export_qwen3_5_decode_pipelined.py" \
+    int4linh8 \
     --hf-id "$checkpoint_dir" \
     --max-ctx 131072 \
     --out-dir "$output_dir"
 
-metadata="$output_dir/qwen3_8_27b_decode_int4lin/metadata.json"
-perl -pi -e 's#"hf_model_id": "[^"]+"#"hf_model_id": "Qwen/Qwen3.8-27B"#' "$metadata"
-printf '%s\n' 'Export complete. Create Models/Qwen3.8-27B-CoreAI-128K/SHA256SUMS before packaging.'
+metadata="$output_dir/qwen3_8_27b_decode_int4linh8_pf16/metadata.json"
+perl -pi -e 's#"tokenizer": "[^"]+"#"tokenizer": "Qwen/Qwen3.8-27B"#; s#"hf_model_id": "[^"]+"#"hf_model_id": "Qwen/Qwen3.8-27B"#' "$metadata"
+printf 'Export complete: %s\n' "$output_dir"

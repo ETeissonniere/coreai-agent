@@ -10,10 +10,6 @@ if ProcessInfo.processInfo.environment["COREAI_VERBOSE"] == "1" {
 let mode = CommandLine.arguments.dropFirst().first
 let agentToolMode = mode == "--agent-tool" || mode == "--agent-web-tool"
 let webToolMode = mode == "--agent-web-tool"
-// The bundled Qwen3.8 graph is decode-only (sequence length 1), so every
-// prompt — including the larger tool-schema prompt — must use S=1 chunked
-// prefill just like the production service.
-setenv("COREAI_CHUNK_THRESHOLD", "1", 1)
 let positionalArguments = agentToolMode
     ? Array(CommandLine.arguments.dropFirst(2))
     : Array(CommandLine.arguments.dropFirst())

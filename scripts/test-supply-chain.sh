@@ -31,6 +31,11 @@ for digest in "$NEMOTRON_SOURCE_MODEL_SHA256" "$NEMOTRON_COREAI_MODEL_SHA256"; d
 done
 
 for script in "$repo_root"/scripts/*.sh; do sh -n "$script"; done
+if [ -f "$repo_root/.build/coreai-model-zoo/conversion/export_qwen3_5_decode_pipelined.py" ]; then
+    patch -s --dry-run \
+        "$repo_root/.build/coreai-model-zoo/conversion/export_qwen3_5_decode_pipelined.py" \
+        "$repo_root/scripts/patches/qwen3_8_multifunction_prefill.patch"
+fi
 
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/coreai-agent-manifest-test.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT HUP INT TERM
