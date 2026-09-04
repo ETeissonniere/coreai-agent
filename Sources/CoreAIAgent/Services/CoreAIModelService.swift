@@ -5,17 +5,40 @@ import CoreAIAgentRuntime
 
 actor LifecycleForwardingState {
     private var forwardedCount: Int
+    private var activeToolCallIDs = Set<String>()
+    private var toolIntervalStartedAt: ContinuousClock.Instant?
+    private var toolExecution: Duration = .zero
     private var waiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     init(initialCount: Int) {
         forwardedCount = initialCount
     }
 
-    func didForwardEvent() {
+    func didForwardEvent(_ event: AgentLifecycleEvent) {
+        let now = ContinuousClock().now
+        switch event {
+        case .toolCall(let id, _, _):
+            if activeToolCallIDs.isEmpty { toolIntervalStartedAt = now }
+            activeToolCallIDs.insert(id)
+        case .toolOutput(let id, _, _):
+            activeToolCallIDs.remove(id)
+            if activeToolCallIDs.isEmpty, let toolIntervalStartedAt {
+                toolExecution += toolIntervalStartedAt.duration(to: now)
+                self.toolIntervalStartedAt = nil
+            }
+        default:
+            break
+        }
         forwardedCount += 1
         let ready = waiters.filter { $0.target <= forwardedCount }
         waiters.removeAll { $0.target <= forwardedCount }
         for waiter in ready { waiter.continuation.resume() }
+    }
+
+
+    func toolExecutionDuration() -> Duration {
+        guard let toolIntervalStartedAt else { return toolExecution }
+        return toolExecution + toolIntervalStartedAt.duration(to: ContinuousClock().now)
     }
 
     func wait(until target: Int) async {
@@ -224,8 +247,7 @@ actor CoreAIModelService: ModelServing {
         let session = state.session
         let clock = ContinuousClock()
         let start = clock.now
-        let throughputBaseline = await state.generationThroughput.snapshot()
-        var firstTokenAt: ContinuousClock.Instant?
+        await state.generationThroughput.beginResponse()
         var journalEventCount = state.journalEventCount
         var finalResponse = ""
         let journalStream = await state.journal.stream(after: journalEventCount)
@@ -233,11 +255,11 @@ actor CoreAIModelService: ModelServing {
         let lifecycleForwarder = Task {
             for await event in journalStream {
                 if case .response = event {
-                    await lifecycleForwardingState.didForwardEvent()
+                    await lifecycleForwardingState.didForwardEvent(event)
                     continue
                 }
                 continuation.yield(.agent(event))
-                await lifecycleForwardingState.didForwardEvent()
+                await lifecycleForwardingState.didForwardEvent(event)
             }
         }
         defer { lifecycleForwarder.cancel() }
@@ -252,9 +274,6 @@ actor CoreAIModelService: ModelServing {
             )
             let response = separated.response
             finalResponse = response
-            if firstTokenAt == nil, !response.isEmpty || separated.reasoning != nil {
-                firstTokenAt = clock.now
-            }
             let now = clock.now
             let usage = snapshot.usage
             let throughput = await state.generationThroughput.snapshot()
@@ -283,16 +302,21 @@ actor CoreAIModelService: ModelServing {
                 metrics: GenerationMetrics(
                     generatedTokens: usage.output.totalTokenCount,
                     reasoningTokens: usage.output.reasoningTokenCount,
-                    timeToFirstToken: start.duration(to: firstTokenAt ?? now),
+                    timeToFirstToken: .seconds(throughput.timeToFirstTokenSeconds),
                     elapsed: start.duration(to: now),
                     prefillTokensPerSecond: Self.rate(
-                        tokens: throughput.prefillTokens - throughputBaseline.prefillTokens,
-                        seconds: throughput.prefillSeconds - throughputBaseline.prefillSeconds
+                        tokens: throughput.prefillTokens,
+                        seconds: throughput.prefillSeconds
                     ),
                     decodeTokensPerSecond: Self.rate(
-                        tokens: throughput.decodeTokens - throughputBaseline.decodeTokens,
-                        seconds: throughput.decodeSeconds - throughputBaseline.decodeSeconds
-                    )
+                        tokens: throughput.decodeTokens,
+                        seconds: throughput.decodeSeconds
+                    ),
+                    initialPrefill: .seconds(throughput.initialPrefillSeconds),
+                    toolCallGeneration: .seconds(throughput.toolCallGenerationSeconds),
+                    toolExecution: await lifecycleForwardingState.toolExecutionDuration(),
+                    continuationPrefill: .seconds(throughput.continuationPrefillSeconds),
+                    decode: .seconds(throughput.decodeSeconds)
                 ),
                 kvCache: Self.snapshot(model.kvCacheStatistics)
             )))

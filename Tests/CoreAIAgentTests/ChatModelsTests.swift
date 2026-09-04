@@ -286,7 +286,7 @@ import Testing
     let completedBeforeForwarding = await probe.isComplete
     #expect(!completedBeforeForwarding)
 
-    await forwarding.didForwardEvent()
+    await forwarding.didForwardEvent(.response(""))
     await waiter.value
     let completedAfterForwarding = await probe.isComplete
     #expect(completedAfterForwarding)

@@ -134,6 +134,11 @@ struct GenerationMetrics: Codable, Equatable, Sendable {
     var elapsed: Duration
     var prefillTokensPerSecond: Double
     var decodeTokensPerSecond: Double
+    var initialPrefill: Duration
+    var toolCallGeneration: Duration
+    var toolExecution: Duration
+    var continuationPrefill: Duration
+    var decode: Duration
 }
 
 enum ModelPhase: Equatable, Sendable {

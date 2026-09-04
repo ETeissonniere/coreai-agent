@@ -355,6 +355,7 @@ public struct CoreAILanguageModel: LanguageModel {
             model: CoreAILanguageModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
+            let requestStartedAt = ContinuousClock().now
             // Tokenization span
             let tokenizationSpan = InstrumentsProfiler.beginTokenization(inputLength: 0)
             let transcript = Array(request.transcript)
@@ -395,6 +396,7 @@ public struct CoreAILanguageModel: LanguageModel {
                     promptTokens: promptTokens,
                     samplingConfig: effectiveSamplingConfig,
                     maxTokens: maxTokens,
+                    requestStartedAt: requestStartedAt,
                     channel: channel
                 )
             } else {
@@ -403,6 +405,7 @@ public struct CoreAILanguageModel: LanguageModel {
                     samplingConfig: effectiveSamplingConfig,
                     maxTokens: maxTokens,
                     reasoningMode: reasoningMode,
+                    requestStartedAt: requestStartedAt,
                     channel: channel
                 )
             }
@@ -415,6 +418,7 @@ public struct CoreAILanguageModel: LanguageModel {
             samplingConfig: SamplingConfiguration,
             maxTokens: Int,
             reasoningMode: ReasoningMode,
+            requestStartedAt: ContinuousClock.Instant,
             channel: LanguageModelExecutorGenerationChannel
         ) async throws {
             let clock = ContinuousClock()
@@ -470,6 +474,11 @@ public struct CoreAILanguageModel: LanguageModel {
                     ?? min(promptTokens.count, engine.lastPrefixHitCount)
                 let generatedTokenAt = clock.now
                 firstOutputAt = firstOutputAt ?? generatedTokenAt
+                if firstOutputAt == generatedTokenAt {
+                    await generationThroughput.recordFirstToken(
+                        after: requestStartedAt.duration(to: generatedTokenAt)
+                    )
+                }
                 let token = output.tokenId
                 CLILogger.log("Generated token ID: \(token)", component: "CoreAIExecutor", level: 2)
                 if eosTokens.contains(token) {
@@ -541,6 +550,8 @@ public struct CoreAILanguageModel: LanguageModel {
                 prefillDuration: prefillStartedAt.duration(to: prefillEndedAt),
                 generatedTokens: generatedTokenCount,
                 decodeDuration: decodeDuration,
+                timeToFirstToken: requestStartedAt.duration(to: prefillEndedAt),
+                generationDuration: prefillStartedAt.duration(to: clock.now),
                 excludedFromDecode: toolCallParser?.emittedToolCall == true
             )
 
@@ -636,6 +647,7 @@ public struct CoreAILanguageModel: LanguageModel {
             promptTokens: [Int],
             samplingConfig: SamplingConfiguration,
             maxTokens: Int,
+            requestStartedAt: ContinuousClock.Instant,
             channel: LanguageModelExecutorGenerationChannel
         ) async throws {
             let schemaData = try JSONEncoder().encode(schema)
@@ -668,6 +680,11 @@ public struct CoreAILanguageModel: LanguageModel {
             for try await result in stream {
                 let generatedTokenAt = clock.now
                 firstGeneratedTokenAt = firstGeneratedTokenAt ?? generatedTokenAt
+                if firstGeneratedTokenAt == generatedTokenAt {
+                    await generationThroughput.recordFirstToken(
+                        after: requestStartedAt.duration(to: generatedTokenAt)
+                    )
+                }
                 lastGeneratedTokenAt = generatedTokenAt
                 generatedTokenCount += 1
                 await channel.send(
@@ -686,6 +703,8 @@ public struct CoreAILanguageModel: LanguageModel {
                 prefillDuration: prefillStartedAt.duration(to: prefillEndedAt),
                 generatedTokens: generatedTokenCount,
                 decodeDuration: decodeDuration,
+                timeToFirstToken: requestStartedAt.duration(to: prefillEndedAt),
+                generationDuration: prefillStartedAt.duration(to: clock.now),
                 excludedFromDecode: false
             )
             await channel.send(

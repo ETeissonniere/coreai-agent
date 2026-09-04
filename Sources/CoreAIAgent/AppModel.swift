@@ -20,6 +20,7 @@ final class AppModel {
     private var activeModelProfile: ModelProfile?
     var showInspector = false
     var lastMetrics: GenerationMetrics?
+    var lastModelLoadDuration: Duration?
     var contextByConversation = [UUID: ContextStatus]()
     var kvCacheByConversation = [UUID: KVCacheSnapshot]()
     var inspectorSection: TaskInspectorSection = .artifacts
@@ -579,7 +580,9 @@ final class AppModel {
             loadingModelProfile = profile
             modelPhase = .loading
             do {
+                let loadStartedAt = ContinuousClock().now
                 try await modelService.load(resourcesAt: url, for: profile)
+                lastModelLoadDuration = loadStartedAt.duration(to: ContinuousClock().now)
                 activeModelProfile = profile
                 modelURL = url
                 if requestedModelLoad?.profile == profile {

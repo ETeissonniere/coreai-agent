@@ -181,16 +181,22 @@ struct GenerationThroughputTests {
         let throughput = GenerationThroughput()
         await throughput.record(
             promptTokens: 100, prefillDuration: .seconds(2), generatedTokens: 11,
-            decodeDuration: .seconds(1), excludedFromDecode: true
+            decodeDuration: .seconds(1), timeToFirstToken: .seconds(3),
+            generationDuration: .seconds(4), excludedFromDecode: true
         )
         await throughput.record(
             promptTokens: 40, prefillDuration: .seconds(1), generatedTokens: 21,
-            decodeDuration: .seconds(2), excludedFromDecode: false
+            decodeDuration: .seconds(2), timeToFirstToken: .seconds(1),
+            generationDuration: .seconds(3), excludedFromDecode: false
         )
         let snapshot = await throughput.snapshot()
         #expect(snapshot.prefillTokens == 140)
         #expect(snapshot.prefillSeconds == 3)
         #expect(snapshot.decodeTokens == 20)
         #expect(snapshot.decodeSeconds == 2)
+        #expect(snapshot.timeToFirstTokenSeconds == 3)
+        #expect(snapshot.initialPrefillSeconds == 2)
+        #expect(snapshot.continuationPrefillSeconds == 1)
+        #expect(snapshot.toolCallGenerationSeconds == 2)
     }
 }

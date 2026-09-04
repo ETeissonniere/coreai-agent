@@ -16,6 +16,7 @@ struct TaskInspectorView: View {
             switch model.inspectorSection {
             case .artifacts: artifacts
             case .context: context
+            case .timing: timing
             case .activity: activity
             }
         }
@@ -28,6 +29,48 @@ struct TaskInspectorView: View {
         } message: {
             Text(saveError ?? "Unknown error")
         }
+    }
+
+    private var timing: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                InspectorGroup("Model") {
+                    LabeledContent("State", value: model.modelPhase.label)
+                    if let duration = model.lastModelLoadDuration {
+                        timingRow("Last load", duration)
+                    }
+                    Text("Model loading happens before a response and is not included in its total.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                InspectorGroup("Response") {
+                    if let metrics = model.lastMetrics {
+                        timingRow("Total", metrics.elapsed)
+                        timingRow("Time to first token", metrics.timeToFirstToken)
+                    } else {
+                        Text("Timing appears after a response.").foregroundStyle(.secondary)
+                    }
+                }
+                if let metrics = model.lastMetrics {
+                    InspectorGroup("Breakdown") {
+                        timingRow("Initial prefill", metrics.initialPrefill)
+                        timingRow("Tool-call generation", metrics.toolCallGeneration)
+                        timingRow("Tool execution", metrics.toolExecution)
+                        timingRow("Prefill after tools", metrics.continuationPrefill)
+                        timingRow("Answer decode", metrics.decode)
+                        let measured = metrics.initialPrefill + metrics.toolCallGeneration
+                            + metrics.toolExecution + metrics.continuationPrefill + metrics.decode
+                        timingRow("Other", max(.zero, metrics.elapsed - measured))
+                    }
+                }
+            }.padding(12)
+        }
+    }
+
+    private func timingRow(_ label: String, _ duration: Duration) -> some View {
+        LabeledContent(label, value: duration.formatted(.units(
+            allowed: [.seconds, .milliseconds], width: .abbreviated,
+            maximumUnitCount: 1, zeroValueUnits: .show(length: 1)
+        )))
     }
 
     @ViewBuilder private var artifacts: some View {
