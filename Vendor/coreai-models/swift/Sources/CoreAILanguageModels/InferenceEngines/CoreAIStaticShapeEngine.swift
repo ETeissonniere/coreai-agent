@@ -347,13 +347,18 @@ public final class StaticShapeEngine: InferenceEngine, @unchecked Sendable {
                 // Divergence — full reset (static engine has fixed-size KV)
                 processedTokenCount = 0
                 history.clear()
+                lastPrefixHitCount = 0
             } else if processedTokenCount >= input.count {
                 // Extension — rewind for seeding
                 let resetTo = Swift.max(0, commonPrefix - 1)
                 processedTokenCount = resetTo
                 history.truncate(to: resetTo)
+                lastPrefixHitCount = resetTo
+            } else {
+                lastPrefixHitCount = commonPrefix
             }
-            lastPrefixHitCount = commonPrefix
+        } else {
+            lastPrefixHitCount = 0
         }
 
         let token = GenerationToken()
@@ -596,6 +601,7 @@ public final class StaticShapeEngine: InferenceEngine, @unchecked Sendable {
             processedTokenCount = tokenIndex
             history.truncate(to: tokenIndex)
         }
+        lastPrefixHitCount = 0
         resetSpan.end()
     }
 

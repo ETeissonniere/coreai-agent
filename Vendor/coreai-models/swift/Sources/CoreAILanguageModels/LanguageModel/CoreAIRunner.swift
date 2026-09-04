@@ -71,6 +71,7 @@ public struct CoreAIRunner {
 
     /// Creates a LanguageModel for FM API usage.
     func makeLanguageModel() async throws -> CoreAILanguageModel {
+        let chatTemplate = Self.prefixStableChatTemplate(in: bundle.tokenizerPath)
         let modelLoadSpan = InstrumentsProfiler.beginModelLoad(name: bundle.name)
         let engine = try await makeInferenceEngine()
         modelLoadSpan.end()
@@ -95,8 +96,55 @@ public struct CoreAIRunner {
             modelIdentifier: bundle.name,
             samplingConfig: SamplingConfiguration.greedy,
             vocabSize: bundle.vocabSize,
-            additionalEosTokenIds: additionalEos
+            additionalEosTokenIds: additionalEos,
+            chatTemplateOverride: chatTemplate
         )
+    }
+
+    static func prefixStableChatTemplate(in tokenizerDirectory: URL?) -> String? {
+        guard let tokenizerDirectory,
+              let template = chatTemplate(in: tokenizerDirectory)
+        else { return nil }
+        let pattern = #"(\{%-?)\s*if\s+loop\.index0\s*>\s*ns\.last_query_index\s*(-?%\})"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(template.startIndex..., in: template)
+        guard expression.firstMatch(in: template, range: range) != nil else {
+            return template.contains("last_query_index") ? nil : template
+        }
+        var stableTemplate = expression.stringByReplacingMatches(
+            in: template,
+            range: range,
+            withTemplate: "$1 if true $2"
+        )
+        let lastAssistantPattern =
+            #"(\{%-?)\s*if\s+loop\.last\s+or\s+\(not\s+loop\.last\s+and\s+reasoning_content\)\s*(-?%\})"#
+        guard let lastAssistantExpression = try? NSRegularExpression(
+            pattern: lastAssistantPattern)
+        else { return nil }
+        let stableRange = NSRange(stableTemplate.startIndex..., in: stableTemplate)
+        stableTemplate = lastAssistantExpression.stringByReplacingMatches(
+            in: stableTemplate,
+            range: stableRange,
+            withTemplate: "$1 if true $2")
+        return stableTemplate
+    }
+
+    private static func chatTemplate(in tokenizerDirectory: URL) -> String? {
+        let jinjaURL = tokenizerDirectory.appending(path: "chat_template.jinja")
+        if let template = try? String(contentsOf: jinjaURL, encoding: .utf8) {
+            return template
+        }
+
+        for filename in ["chat_template.json", "tokenizer_config.json"] {
+            let url = tokenizerDirectory.appending(path: filename)
+            guard let data = try? Data(contentsOf: url),
+                  let object = try? JSONSerialization.jsonObject(with: data),
+                  let config = object as? [String: Any],
+                  let template = config["chat_template"] as? String
+            else { continue }
+            return template
+        }
+        return nil
     }
 
     // MARK: - Private Helpers

@@ -295,23 +295,7 @@ actor CoreAIModelService: ModelServing {
                 turnID: request.userMessageID
             ))
         }
-        // A live Foundation Models transcript contains reasoning and tool
-        // protocol entries needed to finish this turn. Do not reuse it for the
-        // next turn. Recreate the session from the deliberately small durable
-        // context while AppModel keeps the richer activity timeline for UI.
-        state = makeConversationSession(
-            model: model,
-            enabledSkillIDs: enabledSkillIDs,
-            contextTokens: 0,
-            compactionCount: state.compactionCount,
-            canonicalHistory: appended,
-            conversationMemory: state.conversationMemory,
-            compactedSourceIDs: state.compactedSourceIDs,
-            compactedSourceTokenEstimate: state.compactedSourceTokenEstimate,
-            modelProfile: state.modelProfile,
-            reasoningEnabled: state.reasoningEnabled,
-            invocationNamespace: state.invocationNamespace
-        )
+        state.canonicalHistory = appended
         sessions[conversationID] = state
         } catch {
             lifecycleForwarder.cancel()

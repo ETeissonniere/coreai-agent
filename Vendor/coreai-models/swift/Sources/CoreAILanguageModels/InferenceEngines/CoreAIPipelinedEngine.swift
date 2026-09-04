@@ -168,8 +168,6 @@ final class CoreAIPipelinedEngine: InferenceEngine, Sendable {
 
                 // Implicit prefix caching: resolve input against history
                 var (commonPrefix, resolvedNewTokens) = self.history.resolve(input: input)
-                self.lastPrefixHitCount = commonPrefix
-
                 // Detect TRUE divergence before backup (tokens actually differ)
                 let isDivergence = commonPrefix < input.count && commonPrefix < self.history.count
 
@@ -208,6 +206,7 @@ final class CoreAIPipelinedEngine: InferenceEngine, Sendable {
                     // read as divergence and full-reset).
                     self.history.truncate(to: commonPrefix)
                 }
+                self.lastPrefixHitCount = commonPrefix
 
                 let newTokens = Array(resolvedNewTokens)
 
@@ -291,6 +290,7 @@ final class CoreAIPipelinedEngine: InferenceEngine, Sendable {
         precondition(
             tokenIndex >= 0 && tokenIndex <= processedTokenCount,
             "reset(to: \(tokenIndex)) out of range [0, \(processedTokenCount)]")
+        lastPrefixHitCount = 0
         if tokenIndex == 0 {
             // Full reset: cancel + drain + clear everything
             _activeToken.withLock {
