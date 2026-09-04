@@ -33,7 +33,7 @@ At the feasibility-spike revision, `model.safetensors` is 7,947,142,640 bytes
 with SHA-256
 `55d4e2519456c4a9bddf596b0748d630e3b2ce6ff6f4c2b7ed3e07e2b00dad42`.
 The bundled Core AI `main.mlirb` has SHA-256
-`564442f10d449125b46a2f39f6ea70ea3f577e31b0aa301cdfd820690d0daff8`.
+`bbcc8e5c09baccbe2f44f515e6a23aefdc815cf567ab883a17d259ca3a6fe92b`.
 The machine-readable record is packaged as
 `ModelProvenance/Nemotron-3-Nano-4B-CoreAI.json`.
 
@@ -118,7 +118,7 @@ obligation to audit any data or code actually copied.
 ## Publishing the converted artifact
 
 The verified conversion is published at immutable Hugging Face revision
-[`d024ef3621aaeee910f1e9732388b37211511521`](https://huggingface.co/ETeissonniere/Nemotron-3-Nano-4B-CoreAI-128K/tree/d024ef3621aaeee910f1e9732388b37211511521).
+[`0bacc867fb4c799b80866714f640773be0c99fe3`](https://huggingface.co/ETeissonniere/Nemotron-3-Nano-4B-CoreAI-128K/tree/0bacc867fb4c799b80866714f640773be0c99fe3).
 The app's download tooling pins this revision rather than following `main`.
 
 The license permits commercial distribution of Derivative Works, including an
