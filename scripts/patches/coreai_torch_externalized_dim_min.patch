@@ -1,0 +1,15 @@
+--- _utils.py
++++ _utils.py
+@@ -1527,10 +1527,11 @@
+         if not safe_name[0:1].isalpha() and not safe_name.startswith("_"):
+             safe_name = f"d_{safe_name}"
+         r = s.node.shape_env.var_to_range.get(s.node.expr)
++        lower = max(16, int(r.lower)) if r else 16
+         cache[key] = (
+-            Dim(safe_name, min=int(r.lower), max=int(r.upper))
++            Dim(safe_name, min=lower, max=int(r.upper))
+             if r
+-            else Dim(safe_name, min=1)
++            else Dim(safe_name, min=lower)
+         )
+    return cache[key]

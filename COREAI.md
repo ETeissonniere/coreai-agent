@@ -48,9 +48,9 @@ it does not download or locate model weights after installation.
 There is intentionally no model picker: launch verifies and loads the bundled
 asset automatically, then enables the composer when Core AI reports it ready.
 
-The text graph is decode-only with sequence length 1. The app sets
-`COREAI_CHUNK_THRESHOLD=1` before loading it; without this, a generic dynamic
-prefill attempts to bind the whole prompt and Core AI rejects the shape.
+The text asset contract provides a fixed-width prefill function alongside an
+S=1 decode path. The runtime selects prefill automatically without changing the
+131,072-token bound.
 
 ## Commands
 
@@ -59,14 +59,16 @@ make preflight
 make download
 make build
 make test
-make benchmark MODEL="$PWD/Models/Qwen3.8-27B-CoreAI/gpu-pipelined/qwen3_8_27b_decode_int4lin"
+make benchmark MODEL="$PWD/Models/Qwen3.8-27B-CoreAI/gpu-pipelined/qwen3_8_27b_decode_int4linh8_pf16"
 ```
 
 `make export` reproduces the conversion from the official BF16 checkpoint using
-the community graph-authoring overlay and exports INT4 with a 131,072-token
-dynamic-shape bound. It requires at least 80 GiB of free working space and is
-separate from `make download`. The packager prefers that fresh local artifact
-when present and otherwise uses the verified 128K download.
+the community graph-authoring overlay and exports an experimental multifunction
+INT4-body/INT8-head model with S=16 prefill, S=1 decode, and a 131,072-token
+dynamic KV bound. It requires at least 80 GiB of free working space and writes
+under `.build/model-candidates` so an unverified experiment cannot be packaged
+or published accidentally. Set `COREAI_EXPORT_OUTPUT_DIR` explicitly only when
+promoting a validated artifact.
 
 At 128K, the 16 full-attention layers can use about 8 GiB of FP16 KV state in
 addition to the approximately 18 GiB weights. The vendored runtime caps dynamic

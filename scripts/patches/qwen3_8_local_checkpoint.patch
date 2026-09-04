@@ -1,0 +1,20 @@
+--- qwen3_5.py
++++ qwen3_5.py
+@@ -985,10 +985,13 @@
+
+         from coreai_models.models.base import _is_layer_key_beyond
+
+-        model_dir = snapshot_download(
+-            huggingface_model_id,
+-            allow_patterns=["*.safetensors", "*.safetensors.index.json", "config.json"],
+-        )
++        if os.path.isdir(huggingface_model_id):
++            model_dir = os.path.abspath(huggingface_model_id)
++        else:
++            model_dir = snapshot_download(
++                huggingface_model_id,
++                allow_patterns=["*.safetensors", "*.safetensors.index.json", "config.json"],
++            )
+         raw_config = AutoConfig.from_pretrained(model_dir)
+         hf_text = getattr(raw_config, hf_config_attr) if hf_config_attr else raw_config
+         config = cls._get_reauthored_config(hf_text, max_context_length, num_layers=num_layers)

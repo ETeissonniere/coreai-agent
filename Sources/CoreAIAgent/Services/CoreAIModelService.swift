@@ -66,7 +66,6 @@ actor CoreAIModelService: ModelServing {
     ) {
         self.webSearchProvider = webSearchProvider
         self.documentStore = documentStore
-        setenv("COREAI_CHUNK_THRESHOLD", "1", 1)
     }
 
     nonisolated func load(resourcesAt url: URL, for profile: ModelProfile) async throws {

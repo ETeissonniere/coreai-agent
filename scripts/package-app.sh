@@ -24,10 +24,11 @@ nemotron_model_destination="$contents/Resources/Models/Nemotron-3-Nano-4B-CoreAI
 icon_source="$repo_root/Packaging/CoreAIAgent.icns"
 . "$repo_root/scripts/model-sources.env"
 
-if [ -f "$model_128k_source/gpu-pipelined/qwen3_8_27b_decode_int4lin/metadata.json" ]; then
+qwen_relative_model="gpu-pipelined/qwen3_8_27b_decode_int4linh8_pf16"
+if [ -f "$model_128k_source/$qwen_relative_model/metadata.json" ]; then
     model_source="$model_128k_source"
 fi
-if [ ! -f "$model_source/gpu-pipelined/qwen3_8_27b_decode_int4lin/metadata.json" ]; then
+if [ ! -f "$model_source/$qwen_relative_model/metadata.json" ]; then
     printf 'error: model is missing; run make download first.\n' >&2
     exit 1
 fi

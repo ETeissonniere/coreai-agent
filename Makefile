@@ -26,4 +26,4 @@ package:
 
 benchmark:
 	@test -n "$(MODEL)" || (echo "Usage: make benchmark MODEL=/path/to/model-bundle" >&2; exit 2)
-	COREAI_CHUNK_THRESHOLD=1 swift run -c release coreai-agent-canary "$(MODEL)" "Reply with exactly: Core AI is running."
+	swift run -c release coreai-agent-canary "$(MODEL)" "Reply with exactly: Core AI is running."

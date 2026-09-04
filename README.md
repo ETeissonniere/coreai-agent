@@ -47,7 +47,7 @@ make package
 open "dist/CoreAI Agent.app"
 ```
 
-The inference models are hosted outside GitHub because their compiled payloads exceed this repository's Git LFS per-object limit. `make package` prefers fresh local exports in `Models/Qwen3.8-27B-CoreAI-128K` and `Models/Nemotron-3-Nano-4B-CoreAI-128K`, then uses the pinned 128K downloads. Local exports require a complete `SHA256SUMS` manifest. Once packaged, the app performs no model download; Fast/Deep selection only chooses between bundled Core AI resources.
+The inference models are hosted outside GitHub because their compiled payloads exceed this repository's Git LFS per-object limit. `make package` prefers validated local exports in `Models/Qwen3.8-27B-CoreAI-128K` and `Models/Nemotron-3-Nano-4B-CoreAI-128K`, then uses the pinned 128K downloads. `make export` writes experimental Qwen artifacts under `.build/model-candidates`; promotion into `Models` is deliberate and requires a complete `SHA256SUMS` manifest. Once packaged, the app performs no model download; Fast/Deep selection only chooses between bundled Core AI resources.
 
 The Nemotron conversion is published at [`ETeissonniere/Nemotron-3-Nano-4B-CoreAI-128K`](https://huggingface.co/ETeissonniere/Nemotron-3-Nano-4B-CoreAI-128K) under the NVIDIA Nemotron Open Model License. See [the redistribution and provenance notes](docs/Nemotron-Model-Redistribution.md) before distributing a build.
 
