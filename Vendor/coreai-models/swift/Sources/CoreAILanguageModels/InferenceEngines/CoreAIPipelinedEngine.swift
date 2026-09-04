@@ -1460,7 +1460,9 @@ private struct EngineImpl: ~Copyable {
         if !prompt.isEmpty {
             let prefillTokens: ArraySlice<Int32>
             if prompt.count > config.chunkThreshold
-                || (prefillFunction != nil && prompt.count > 1) {
+                || (prefillFunction != nil && prompt.count > 1)
+                || (logitsBaseDesc.shape[1] > 0 && prompt.count > logitsBaseDesc.shape[1])
+            {
                 prefillTokens = try await processChunkedInput(tokens: prompt)
             } else {
                 let prefillCapacity = max(1, prompt.count)
@@ -1547,7 +1549,10 @@ private struct EngineImpl: ~Copyable {
             return remainingTokens
         }
 
-        let chunkSize = config.prefillChunkSize
+        // Decode-only exports have a static S=1 logits view and must prefill
+        // token-wise. Dynamic-output graphs can use the configured chunk size.
+        let staticLogitsLength = logitsBaseDesc.shape[1]
+        let chunkSize = staticLogitsLength > 0 ? staticLogitsLength : config.prefillChunkSize
 
         try logits.ensureCapacity(forContextLength: chunkSize)
 

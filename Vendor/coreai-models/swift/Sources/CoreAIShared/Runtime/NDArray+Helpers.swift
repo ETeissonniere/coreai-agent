@@ -13,6 +13,9 @@ import Foundation
 /// Uses `NDArrayDescriptor.resolvingDynamicDimensions().preferredStrides` to get
 /// framework-blessed strides that respect hardware alignment constraints.
 public func resolvedStrides(descriptor: NDArrayDescriptor, shape: [Int]) throws -> [Int] {
+    if !descriptor.shape.contains(where: { $0 < 0 }) {
+        return descriptor.preferredStrides
+    }
     let resolved = descriptor.resolvingDynamicDimensions(shape)
     return resolved.preferredStrides
 }
