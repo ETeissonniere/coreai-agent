@@ -18,6 +18,8 @@ public actor GenerationThroughput {
     private var decodeTokens = 0
     private var decodeSeconds = 0.0
 
+    public init() {}
+
     public func snapshot() -> GenerationThroughputSnapshot {
         GenerationThroughputSnapshot(
             prefillTokens: prefillTokens, prefillSeconds: prefillSeconds,
@@ -26,10 +28,10 @@ public actor GenerationThroughput {
     }
 
     func record(promptTokens: Int, prefillDuration: Duration, generatedTokens: Int,
-                decodeDuration: Duration, emittedToolCall: Bool) {
+                decodeDuration: Duration, excludedFromDecode: Bool) {
         prefillTokens += promptTokens
         prefillSeconds += prefillDuration.seconds
-        guard !emittedToolCall else { return }
+        guard !excludedFromDecode else { return }
         decodeTokens += max(0, generatedTokens - 1)
         decodeSeconds += decodeDuration.seconds
     }

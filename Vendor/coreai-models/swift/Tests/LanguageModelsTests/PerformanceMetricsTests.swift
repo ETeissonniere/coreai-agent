@@ -4,6 +4,7 @@
 // be found in the LICENSE file or at https://opensource.org/licenses/BSD-3-Clause
 
 import Foundation
+import FoundationModels
 import Testing
 
 @testable import CoreAILanguageModels
@@ -112,16 +113,79 @@ struct PerformanceMetricsTests {
 
 @Suite("GenerationThroughput")
 struct GenerationThroughputTests {
+    @Test("Executor records generated throughput")
+    func executorRecordsThroughput() async throws {
+        let throughput = GenerationThroughput()
+        let model = CoreAILanguageModel(
+            engine: MockEngine(tokens: [65, 66]),
+            tokenizer: MergingMockTokenizer(),
+            generationThroughput: throughput
+        )
+        let session = LanguageModelSession(model: model)
+        _ = try await session.respond(
+            to: "hello",
+            options: GenerationOptions(maximumResponseTokens: 2)
+        )
+
+        let snapshot = await throughput.snapshot()
+        #expect(snapshot.prefillTokens > 0)
+        #expect(snapshot.decodeTokens == 1)
+    }
+
+    @Test("Executor records prefill for an immediate stop token")
+    func executorRecordsPrefillWithoutDecode() async throws {
+        let throughput = GenerationThroughput()
+        let model = CoreAILanguageModel(
+            engine: MockEngine(tokens: [2]),
+            tokenizer: MergingMockTokenizer(),
+            generationThroughput: throughput
+        )
+        let session = LanguageModelSession(model: model)
+        _ = try await session.respond(
+            to: "hello",
+            options: GenerationOptions(maximumResponseTokens: 1)
+        )
+
+        let snapshot = await throughput.snapshot()
+        #expect(snapshot.prefillTokens > 0)
+        #expect(snapshot.decodeTokens == 0)
+    }
+
+    @Test("Executor excludes tool-call generation from decode throughput")
+    func executorExcludesToolCallDecode() async {
+        let toolCall = "<tool_call><function=missingTool></function></tool_call>"
+        let throughput = GenerationThroughput()
+        let model = CoreAILanguageModel(
+            engine: MockEngine(tokens: toolCall.utf8.map(Int32.init) + [2]),
+            tokenizer: MergingMockTokenizer(),
+            generationThroughput: throughput
+        )
+        let session = LanguageModelSession(model: model)
+
+        do {
+            _ = try await session.respond(
+                to: "hello",
+                options: GenerationOptions(maximumResponseTokens: toolCall.utf8.count + 1)
+            )
+        } catch {
+            #expect(error.localizedDescription.contains("missingTool"))
+        }
+
+        let snapshot = await throughput.snapshot()
+        #expect(snapshot.prefillTokens > 0)
+        #expect(snapshot.decodeTokens == 0)
+    }
+
     @Test("Separates prefill and answer decode while excluding tool-call decode")
     func separatesGenerationPhases() async {
         let throughput = GenerationThroughput()
         await throughput.record(
             promptTokens: 100, prefillDuration: .seconds(2), generatedTokens: 11,
-            decodeDuration: .seconds(1), emittedToolCall: true
+            decodeDuration: .seconds(1), excludedFromDecode: true
         )
         await throughput.record(
             promptTokens: 40, prefillDuration: .seconds(1), generatedTokens: 21,
-            decodeDuration: .seconds(2), emittedToolCall: false
+            decodeDuration: .seconds(2), excludedFromDecode: false
         )
         let snapshot = await throughput.snapshot()
         #expect(snapshot.prefillTokens == 140)

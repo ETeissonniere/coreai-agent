@@ -209,6 +209,7 @@ struct KVCacheSnapshot: Codable, Equatable, Sendable {
 enum ModelServiceError: LocalizedError {
     case invalidBundle
     case unsupportedModel
+    case generationInProgress
 
     var errorDescription: String? {
         switch self {
@@ -216,6 +217,8 @@ enum ModelServiceError: LocalizedError {
             "The selected folder is not a valid exported Core AI language bundle."
         case .unsupportedModel:
             "Qwen3.8 is not yet supported by Apple's Core AI exporter."
+        case .generationInProgress:
+            "This conversation is already generating a response."
         }
     }
 }

@@ -31,57 +31,6 @@ import Testing
     #expect(conversation.messages.isEmpty)
 }
 
-@Test func generationMetricsSeparatePrefillAndDecode() {
-    let metrics = GenerationMetrics(
-        promptTokens: 100,
-        cachedTokens: 20,
-        generatedTokens: 40,
-        reasoningTokens: 8,
-        timeToFirstToken: .seconds(2),
-        elapsed: .seconds(10),
-        decodeTokens: 28,
-        decodeDuration: .seconds(4),
-        prefillTokens: 60,
-        prefillDuration: .seconds(3)
-    )
-    #expect(metrics.prefillTokensPerSecond == 20)
-    #expect(metrics.decodeTokensPerSecond == 7)
-    #expect(metrics.contextTokens == 140)
-}
-
-@Test func generationMetricsRequirePositiveDecodeDuration() {
-    let metrics = GenerationMetrics(
-        promptTokens: 100,
-        cachedTokens: 0,
-        generatedTokens: 40,
-        reasoningTokens: 0,
-        timeToFirstToken: .seconds(2),
-        elapsed: .seconds(10),
-        decodeTokens: 28,
-        decodeDuration: .zero
-    )
-    #expect(metrics.decodeTokensPerSecond == 0)
-}
-
-@Test func legacyGenerationMetricsUseWallClockFallback() throws {
-    let metrics = GenerationMetrics(
-        promptTokens: 100, cachedTokens: 20, generatedTokens: 40, reasoningTokens: 8,
-        timeToFirstToken: .seconds(2), elapsed: .seconds(6)
-    )
-    var json = try #require(
-        JSONSerialization.jsonObject(with: JSONEncoder().encode(metrics)) as? [String: Any]
-    )
-    json.removeValue(forKey: "decodeTokens")
-    json.removeValue(forKey: "decodeDuration")
-    json.removeValue(forKey: "prefillTokens")
-    json.removeValue(forKey: "prefillDuration")
-    let restored = try JSONDecoder().decode(
-        GenerationMetrics.self, from: JSONSerialization.data(withJSONObject: json)
-    )
-    #expect(restored.prefillTokensPerSecond == 40)
-    #expect(restored.decodeTokensPerSecond == 10)
-}
-
 @Test func modelProfilesExposeTheAcceptedRuntimeMetadata() {
     #expect(ModelProfile.fast.modelName == "Nemotron 3 Nano 4B")
     #expect(ModelProfile.fast.quantization == "INT8")

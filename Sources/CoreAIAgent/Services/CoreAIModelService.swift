@@ -42,6 +42,7 @@ actor CoreAIModelService: ModelServing {
         let journal: AgentEventJournal
         let broker: ToolExecutionBroker
         let toolBudget: ToolCallBudget
+        let generationThroughput: GenerationThroughput
         let invocationNamespace: String
     }
 
@@ -57,6 +58,7 @@ actor CoreAIModelService: ModelServing {
     private var inputLimit: Int { maxContextLength - outputReserve }
     private var compactThreshold: Int { Int(Double(inputLimit) * 0.85) }
     private var sessions = [UUID: ConversationSession]()
+    private var activeConversationIDs = Set<UUID>()
     private let webSearchProvider: (any WebSearching)?
     private let documentStore: DocumentArtifactStore
 
@@ -100,7 +102,7 @@ actor CoreAIModelService: ModelServing {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await self.runGeneration(
+                    try await self.runExclusiveGeneration(
                         request: request,
                         continuation: continuation
                     )
@@ -113,6 +115,17 @@ actor CoreAIModelService: ModelServing {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    private func runExclusiveGeneration(
+        request: ModelGenerationRequest,
+        continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation
+    ) async throws {
+        guard activeConversationIDs.insert(request.conversationID).inserted else {
+            throw ModelServiceError.generationInProgress
+        }
+        defer { activeConversationIDs.remove(request.conversationID) }
+        try await runGeneration(request: request, continuation: continuation)
     }
 
     private func runGeneration(
@@ -211,7 +224,7 @@ actor CoreAIModelService: ModelServing {
         let session = state.session
         let clock = ContinuousClock()
         let start = clock.now
-        let throughputBaseline = await model.generationThroughput.snapshot()
+        let throughputBaseline = await state.generationThroughput.snapshot()
         var firstTokenAt: ContinuousClock.Instant?
         var journalEventCount = state.journalEventCount
         var finalResponse = ""
@@ -244,7 +257,7 @@ actor CoreAIModelService: ModelServing {
             }
             let now = clock.now
             let usage = snapshot.usage
-            let throughput = await model.generationThroughput.snapshot()
+            let throughput = await state.generationThroughput.snapshot()
             let contextTokens = usage.input.totalTokenCount + usage.output.totalTokenCount
             state.contextTokens = contextTokens
             sessions[conversationID] = state
@@ -268,16 +281,18 @@ actor CoreAIModelService: ModelServing {
                 text: response,
                 reasoning: separated.reasoning,
                 metrics: GenerationMetrics(
-                    promptTokens: usage.input.totalTokenCount,
-                    cachedTokens: usage.input.cachedTokenCount,
                     generatedTokens: usage.output.totalTokenCount,
                     reasoningTokens: usage.output.reasoningTokenCount,
                     timeToFirstToken: start.duration(to: firstTokenAt ?? now),
                     elapsed: start.duration(to: now),
-                    decodeTokens: throughput.decodeTokens - throughputBaseline.decodeTokens,
-                    decodeDuration: .seconds(throughput.decodeSeconds - throughputBaseline.decodeSeconds),
-                    prefillTokens: throughput.prefillTokens - throughputBaseline.prefillTokens,
-                    prefillDuration: .seconds(throughput.prefillSeconds - throughputBaseline.prefillSeconds)
+                    prefillTokensPerSecond: Self.rate(
+                        tokens: throughput.prefillTokens - throughputBaseline.prefillTokens,
+                        seconds: throughput.prefillSeconds - throughputBaseline.prefillSeconds
+                    ),
+                    decodeTokensPerSecond: Self.rate(
+                        tokens: throughput.decodeTokens - throughputBaseline.decodeTokens,
+                        seconds: throughput.decodeSeconds - throughputBaseline.decodeSeconds
+                    )
                 ),
                 kvCache: Self.snapshot(model.kvCacheStatistics)
             )))
@@ -407,9 +422,10 @@ actor CoreAIModelService: ModelServing {
             Recent turns, preserved verbatim:
             \(recent)
             """
+        let generationThroughput = GenerationThroughput()
         return ConversationSession(
             session: LocalAgentSession.make(
-                model: model,
+                model: model.measuringGeneration(with: generationThroughput),
                 instructions: instructions,
                 tools: tools(
                     for: state.enabledSkillIDs,
@@ -434,6 +450,7 @@ actor CoreAIModelService: ModelServing {
             journal: state.journal,
             broker: state.broker,
             toolBudget: ToolCallBudget(maximumCalls: 3),
+            generationThroughput: generationThroughput,
             invocationNamespace: state.invocationNamespace
         )
     }
@@ -457,6 +474,7 @@ actor CoreAIModelService: ModelServing {
         let journal = AgentEventJournal()
         let broker = ToolExecutionBroker(journal: journal)
         let toolBudget = ToolCallBudget(maximumCalls: 3)
+        let generationThroughput = GenerationThroughput()
         let restoredMemory = compaction?.memory ?? conversationMemory
         let compactedIDs = Set(compaction?.sourceHistoryIDs ?? [])
         // A persisted app may still retain every visible message. Exclude only
@@ -481,7 +499,7 @@ actor CoreAIModelService: ModelServing {
         if !persistedContext.isEmpty { instructions += "\n\nPersisted recent conversation:\n\(persistedContext)" }
         return ConversationSession(
             session: LocalAgentSession.make(
-                model: model,
+                model: model.measuringGeneration(with: generationThroughput),
                 instructions: instructions,
                 tools: tools(
                     for: enabledSkillIDs,
@@ -507,6 +525,7 @@ actor CoreAIModelService: ModelServing {
             journal: journal,
             broker: broker,
             toolBudget: toolBudget,
+            generationThroughput: generationThroughput,
             invocationNamespace: invocationNamespace
         )
     }
@@ -719,6 +738,10 @@ actor CoreAIModelService: ModelServing {
 
     private static func estimatedTokens(_ text: String) -> Int {
         max(1, text.utf8.count / 4)
+    }
+
+    private static func rate(tokens: Int, seconds: Double) -> Double {
+        seconds > 0 ? Double(tokens) / seconds : 0
     }
 
     private static func snapshot(_ statistics: KVCacheStatistics) -> KVCacheSnapshot {
