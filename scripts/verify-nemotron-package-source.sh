@@ -30,11 +30,11 @@ if [ ! -f "$model" ]; then
     printf 'error: Nemotron Core AI model is missing: %s\n' "$model" >&2
     exit 1
 fi
-if ! grep -F '"compression": "int8-body-clipped-head-absmax-per-block-32"' "$metadata" >/dev/null; then
+if [ "$(/usr/bin/plutil -extract compression raw -expect string -o - "$metadata")" != "int8-body-clipped-head-absmax-per-block-32" ]; then
     printf 'error: Nemotron package is not the expected INT8 profile\n' >&2
     exit 1
 fi
-if ! grep -F "\"revision\": \"$expected_source_revision\"" "$metadata" >/dev/null; then
+if [ "$(/usr/bin/plutil -extract source.revision raw -expect string -o - "$metadata")" != "$expected_source_revision" ]; then
     printf 'error: Nemotron source revision does not match the pinned revision\n' >&2
     exit 1
 fi

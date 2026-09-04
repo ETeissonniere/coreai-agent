@@ -21,7 +21,7 @@ test-supply-chain:
 build:
 	swift build -c release
 
-package: build
+package:
 	./scripts/package-app.sh
 
 benchmark:
