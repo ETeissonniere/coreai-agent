@@ -433,8 +433,11 @@ private final class HarnessModelServiceStub: ModelServing, @unchecked Sendable {
                 text: "",
                 reasoning: "I should search for a primary source.",
                 metrics: GenerationMetrics(
-                    promptTokens: 10, cachedTokens: 0, generatedTokens: 1, reasoningTokens: 1,
-                    timeToFirstToken: .milliseconds(5), elapsed: .milliseconds(10)
+                    generatedTokens: 1, reasoningTokens: 1,
+                    timeToFirstToken: .milliseconds(5), elapsed: .milliseconds(10),
+                    prefillTokensPerSecond: 2_000, decodeTokensPerSecond: 0,
+                    initialPrefill: .milliseconds(8), toolCallGeneration: .zero,
+                    toolExecution: .zero, continuationPrefill: .zero, decode: .zero
                 ),
                 kvCache: KVCacheSnapshot(
                     usedTokens: 11, allocatedTokens: 32, maximumTokens: 4_096, reusedPrefixTokens: 0
@@ -455,12 +458,15 @@ private final class HarnessModelServiceStub: ModelServing, @unchecked Sendable {
                 text: "Finished.",
                 reasoning: "I should search for a primary source.\n\nI checked the primary source.",
                 metrics: GenerationMetrics(
-                    promptTokens: 10,
-                    cachedTokens: 0,
                     generatedTokens: 2,
                     reasoningTokens: 4,
                     timeToFirstToken: .milliseconds(10),
-                    elapsed: .milliseconds(20)
+                    elapsed: .milliseconds(20),
+                    prefillTokensPerSecond: 1_000,
+                    decodeTokensPerSecond: 100,
+                    initialPrefill: .milliseconds(8), toolCallGeneration: .milliseconds(2),
+                    toolExecution: .milliseconds(4), continuationPrefill: .milliseconds(3),
+                    decode: .milliseconds(2)
                 ),
                 kvCache: KVCacheSnapshot(
                     usedTokens: 12,
@@ -496,8 +502,11 @@ private final class AttemptBoundaryModelServiceStub: ModelServing, @unchecked Se
             continuation.yield(.content(GenerationUpdate(
                 text: "Finished.", reasoning: nil,
                 metrics: GenerationMetrics(
-                    promptTokens: 4, cachedTokens: 0, generatedTokens: 1, reasoningTokens: 0,
-                    timeToFirstToken: .milliseconds(1), elapsed: .milliseconds(2)
+                    generatedTokens: 1, reasoningTokens: 0,
+                    timeToFirstToken: .milliseconds(1), elapsed: .milliseconds(2),
+                    prefillTokensPerSecond: 4_000, decodeTokensPerSecond: 0,
+                    initialPrefill: .milliseconds(1), toolCallGeneration: .zero,
+                    toolExecution: .zero, continuationPrefill: .zero, decode: .zero
                 ),
                 kvCache: KVCacheSnapshot(
                     usedTokens: 5, allocatedTokens: 32, maximumTokens: 4_096, reusedPrefixTokens: 0
@@ -570,8 +579,12 @@ private actor ApprovalBrokerModelServiceStub: ModelServing {
             continuation.yield(.content(GenerationUpdate(
                 text: "Search complete.", reasoning: nil,
                 metrics: GenerationMetrics(
-                    promptTokens: 8, cachedTokens: 0, generatedTokens: 2, reasoningTokens: 0,
-                    timeToFirstToken: .milliseconds(1), elapsed: .milliseconds(2)
+                    generatedTokens: 2, reasoningTokens: 0,
+                    timeToFirstToken: .milliseconds(1), elapsed: .milliseconds(2),
+                    prefillTokensPerSecond: 8_000, decodeTokensPerSecond: 1_000,
+                    initialPrefill: .milliseconds(1), toolCallGeneration: .zero,
+                    toolExecution: .zero, continuationPrefill: .zero,
+                    decode: .milliseconds(1)
                 ),
                 kvCache: KVCacheSnapshot(
                     usedTokens: 10, allocatedTokens: 32, maximumTokens: 4_096, reusedPrefixTokens: 0

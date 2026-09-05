@@ -31,20 +31,6 @@ import Testing
     #expect(conversation.messages.isEmpty)
 }
 
-@Test func generationMetricsSeparatePrefillAndDecode() {
-    let metrics = GenerationMetrics(
-        promptTokens: 100,
-        cachedTokens: 20,
-        generatedTokens: 40,
-        reasoningTokens: 8,
-        timeToFirstToken: .seconds(2),
-        elapsed: .seconds(6)
-    )
-    #expect(metrics.prefillTokensPerSecond == 40)
-    #expect(metrics.tokensPerSecond == 10)
-    #expect(metrics.contextTokens == 140)
-}
-
 @Test func modelProfilesExposeTheAcceptedRuntimeMetadata() {
     #expect(ModelProfile.fast.modelName == "Nemotron 3 Nano 4B")
     #expect(ModelProfile.fast.quantization == "INT8")
@@ -300,7 +286,7 @@ import Testing
     let completedBeforeForwarding = await probe.isComplete
     #expect(!completedBeforeForwarding)
 
-    await forwarding.didForwardEvent()
+    await forwarding.didForwardEvent(.response(""))
     await waiter.value
     let completedAfterForwarding = await probe.isComplete
     #expect(completedAfterForwarding)

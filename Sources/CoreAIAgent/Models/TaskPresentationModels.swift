@@ -31,6 +31,7 @@ enum AgentTaskState: String, Sendable {
 enum TaskInspectorSection: String, CaseIterable, Identifiable {
     case artifacts = "Artifacts"
     case context = "Context"
+    case timing = "Timing"
     case activity = "Activity"
     var id: Self { self }
 }

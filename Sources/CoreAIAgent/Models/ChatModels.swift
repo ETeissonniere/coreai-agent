@@ -128,32 +128,17 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
 }
 
 struct GenerationMetrics: Codable, Equatable, Sendable {
-    var promptTokens: Int
-    var cachedTokens: Int
     var generatedTokens: Int
     var reasoningTokens: Int
     var timeToFirstToken: Duration
     var elapsed: Duration
-
-    var tokensPerSecond: Double {
-        let seconds = elapsed.seconds - timeToFirstToken.seconds
-        guard seconds > 0 else { return 0 }
-        return Double(generatedTokens) / seconds
-    }
-
-    var prefillTokensPerSecond: Double {
-        guard timeToFirstToken.seconds > 0 else { return 0 }
-        return Double(promptTokens - cachedTokens) / timeToFirstToken.seconds
-    }
-
-    var contextTokens: Int { promptTokens + generatedTokens }
-}
-
-private extension Duration {
-    var seconds: Double {
-        let parts = components
-        return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
-    }
+    var prefillTokensPerSecond: Double
+    var decodeTokensPerSecond: Double
+    var initialPrefill: Duration
+    var toolCallGeneration: Duration
+    var toolExecution: Duration
+    var continuationPrefill: Duration
+    var decode: Duration
 }
 
 enum ModelPhase: Equatable, Sendable {

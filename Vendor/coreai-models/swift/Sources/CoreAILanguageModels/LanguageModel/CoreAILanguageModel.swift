@@ -75,6 +75,7 @@ public struct CoreAILanguageModel: LanguageModel {
     private let additionalEosTokenIds: [Int32]
     private let chatTemplateOverride: String?
     private let toolCallTextCache: ToolCallTextCache
+    public let generationThroughput: GenerationThroughput
 
     // MARK: - Protocol Requirements
 
@@ -99,7 +100,8 @@ public struct CoreAILanguageModel: LanguageModel {
             vocabSize: vocabSize,
             additionalEosTokenIds: additionalEosTokenIds,
             chatTemplateOverride: chatTemplateOverride,
-            toolCallTextCache: toolCallTextCache
+            toolCallTextCache: toolCallTextCache,
+            generationThroughput: generationThroughput
         )
     }
 
@@ -142,7 +144,8 @@ public struct CoreAILanguageModel: LanguageModel {
         samplingConfig: SamplingConfiguration = .greedy,
         vocabSize: Int? = nil,
         additionalEosTokenIds: [Int32] = [],
-        chatTemplateOverride: String? = nil
+        chatTemplateOverride: String? = nil,
+        generationThroughput: GenerationThroughput = GenerationThroughput()
     ) {
         self.engine = engine
         self.tokenizer = tokenizer
@@ -152,10 +155,24 @@ public struct CoreAILanguageModel: LanguageModel {
         self.additionalEosTokenIds = additionalEosTokenIds
         self.chatTemplateOverride = chatTemplateOverride
         self.toolCallTextCache = ToolCallTextCache()
+        self.generationThroughput = generationThroughput
         self.supportsToolCalling = CoreAIExecutor.detectToolCallMarkers(using: tokenizer) != nil
         self.supportsReasoning =
             tokenizer.convertTokenToId("<think>") != nil
             || tokenizer.convertTokenToId("<|reasoning_start|>") != nil
+    }
+
+    public func measuringGeneration(with throughput: GenerationThroughput) -> Self {
+        Self(
+            engine: engine,
+            tokenizer: tokenizer,
+            modelIdentifier: modelIdentifier,
+            samplingConfig: samplingConfig,
+            vocabSize: vocabSize,
+            additionalEosTokenIds: additionalEosTokenIds,
+            chatTemplateOverride: chatTemplateOverride,
+            generationThroughput: throughput
+        )
     }
 
     // MARK: - Executor
@@ -172,17 +189,20 @@ public struct CoreAILanguageModel: LanguageModel {
             fileprivate let additionalEosTokenIds: [Int32]
             fileprivate let chatTemplateOverride: String?
             fileprivate let toolCallTextCache: ToolCallTextCache
+            fileprivate let generationThroughput: GenerationThroughput
 
             public static func == (lhs: Configuration, rhs: Configuration) -> Bool {
                 lhs.modelIdentifier == rhs.modelIdentifier
                     && lhs.samplingConfig == rhs.samplingConfig
                     && lhs.chatTemplateOverride == rhs.chatTemplateOverride
+                    && lhs.generationThroughput === rhs.generationThroughput
             }
 
             public func hash(into hasher: inout Hasher) {
                 hasher.combine(modelIdentifier)
                 hasher.combine(samplingConfig)
                 hasher.combine(chatTemplateOverride)
+                hasher.combine(ObjectIdentifier(generationThroughput))
             }
         }
 
@@ -209,6 +229,7 @@ public struct CoreAILanguageModel: LanguageModel {
         private let toolCallMarkers: (open: String, close: String)?
         private let chatTemplateOverride: String?
         private let toolCallTextCache: ToolCallTextCache
+        private let generationThroughput: GenerationThroughput
 
         // MARK: - Initialization
 
@@ -222,6 +243,7 @@ public struct CoreAILanguageModel: LanguageModel {
             self.toolCallMarkers = Self.detectToolCallMarkers(using: configuration.tokenizer)
             self.chatTemplateOverride = configuration.chatTemplateOverride
             self.toolCallTextCache = configuration.toolCallTextCache
+            self.generationThroughput = configuration.generationThroughput
 
             // Build the full set of EOS-like token IDs
             var eos = Set<Int32>()
@@ -333,6 +355,7 @@ public struct CoreAILanguageModel: LanguageModel {
             model: CoreAILanguageModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
+            let requestStartedAt = ContinuousClock().now
             // Tokenization span
             let tokenizationSpan = InstrumentsProfiler.beginTokenization(inputLength: 0)
             let transcript = Array(request.transcript)
@@ -373,6 +396,7 @@ public struct CoreAILanguageModel: LanguageModel {
                     promptTokens: promptTokens,
                     samplingConfig: effectiveSamplingConfig,
                     maxTokens: maxTokens,
+                    requestStartedAt: requestStartedAt,
                     channel: channel
                 )
             } else {
@@ -381,6 +405,7 @@ public struct CoreAILanguageModel: LanguageModel {
                     samplingConfig: effectiveSamplingConfig,
                     maxTokens: maxTokens,
                     reasoningMode: reasoningMode,
+                    requestStartedAt: requestStartedAt,
                     channel: channel
                 )
             }
@@ -393,8 +418,11 @@ public struct CoreAILanguageModel: LanguageModel {
             samplingConfig: SamplingConfiguration,
             maxTokens: Int,
             reasoningMode: ReasoningMode,
+            requestStartedAt: ContinuousClock.Instant,
             channel: LanguageModelExecutorGenerationChannel
         ) async throws {
+            let clock = ContinuousClock()
+            let prefillStartedAt = clock.now
             let tokenStream = try await engine.generate(
                 with: promptTokens.map(Int32.init),
                 samplingConfiguration: samplingConfig,
@@ -435,12 +463,22 @@ public struct CoreAILanguageModel: LanguageModel {
             }
             var generatedTokenCount: Int = 0
             var reasoningTokenCount: Int = 0
+            var firstOutputAt: ContinuousClock.Instant?
+            var firstGeneratedTokenAt: ContinuousClock.Instant?
+            var lastGeneratedTokenAt: ContinuousClock.Instant?
 
             for try await output in tokenStream {
                 // Prefix resolution completes before the first output. Capture
                 // it while this generation still owns the shared engine.
                 cachedTokenCount = cachedTokenCount
                     ?? min(promptTokens.count, engine.lastPrefixHitCount)
+                let generatedTokenAt = clock.now
+                firstOutputAt = firstOutputAt ?? generatedTokenAt
+                if firstOutputAt == generatedTokenAt {
+                    await generationThroughput.recordFirstToken(
+                        after: requestStartedAt.duration(to: generatedTokenAt)
+                    )
+                }
                 let token = output.tokenId
                 CLILogger.log("Generated token ID: \(token)", component: "CoreAIExecutor", level: 2)
                 if eosTokens.contains(token) {
@@ -449,6 +487,8 @@ public struct CoreAILanguageModel: LanguageModel {
                 }
 
                 generatedTokens.append(token)
+                firstGeneratedTokenAt = firstGeneratedTokenAt ?? generatedTokenAt
+                lastGeneratedTokenAt = generatedTokenAt
                 tokenStep += 1
                 generatedTokenCount += 1
 
@@ -499,6 +539,21 @@ public struct CoreAILanguageModel: LanguageModel {
 
             let resolvedCachedTokenCount = cachedTokenCount
                 ?? min(promptTokens.count, engine.lastPrefixHitCount)
+            let prefillEndedAt = firstOutputAt ?? clock.now
+            let decodeDuration = if let firstGeneratedTokenAt, let lastGeneratedTokenAt {
+                firstGeneratedTokenAt.duration(to: lastGeneratedTokenAt)
+            } else {
+                Duration.zero
+            }
+            await generationThroughput.record(
+                promptTokens: max(0, promptTokens.count - resolvedCachedTokenCount),
+                prefillDuration: prefillStartedAt.duration(to: prefillEndedAt),
+                generatedTokens: generatedTokenCount,
+                decodeDuration: decodeDuration,
+                timeToFirstToken: requestStartedAt.duration(to: prefillEndedAt),
+                generationDuration: prefillStartedAt.duration(to: clock.now),
+                excludedFromDecode: toolCallParser?.emittedToolCall == true
+            )
 
             await channel.send(
                 .response(
@@ -592,6 +647,7 @@ public struct CoreAILanguageModel: LanguageModel {
             promptTokens: [Int],
             samplingConfig: SamplingConfiguration,
             maxTokens: Int,
+            requestStartedAt: ContinuousClock.Instant,
             channel: LanguageModelExecutorGenerationChannel
         ) async throws {
             let schemaData = try JSONEncoder().encode(schema)
@@ -606,6 +662,8 @@ public struct CoreAILanguageModel: LanguageModel {
                 additionalEosTokenIds: Array(eosTokenIds)
             )
 
+            let clock = ContinuousClock()
+            let prefillStartedAt = clock.now
             let stream = try await strategy.decode(
                 from: .tokens(promptTokens),
                 tokenizer: tokenizer,
@@ -617,16 +675,44 @@ public struct CoreAILanguageModel: LanguageModel {
 
             // Bridge AsyncThrowingStream -> LanguageModelExecutorGenerationChannel
             var generatedTokenCount = 0
+            var firstGeneratedTokenAt: ContinuousClock.Instant?
+            var lastGeneratedTokenAt: ContinuousClock.Instant?
             for try await result in stream {
+                let generatedTokenAt = clock.now
+                firstGeneratedTokenAt = firstGeneratedTokenAt ?? generatedTokenAt
+                if firstGeneratedTokenAt == generatedTokenAt {
+                    await generationThroughput.recordFirstToken(
+                        after: requestStartedAt.duration(to: generatedTokenAt)
+                    )
+                }
+                lastGeneratedTokenAt = generatedTokenAt
                 generatedTokenCount += 1
                 await channel.send(
                     .response(action: .appendText(result.text, tokenCount: 1))
                 )
             }
 
-            // Usage telemetry placeholder — awaiting Usage(input:output:) API.
-            _ = promptTokens.count
-            _ = generatedTokenCount
+            let prefillEndedAt = firstGeneratedTokenAt ?? clock.now
+            let decodeDuration = if let firstGeneratedTokenAt, let lastGeneratedTokenAt {
+                firstGeneratedTokenAt.duration(to: lastGeneratedTokenAt)
+            } else {
+                Duration.zero
+            }
+            await generationThroughput.record(
+                promptTokens: max(0, promptTokens.count - engine.kvCacheStatistics.reusedPrefixTokens),
+                prefillDuration: prefillStartedAt.duration(to: prefillEndedAt),
+                generatedTokens: generatedTokenCount,
+                decodeDuration: decodeDuration,
+                timeToFirstToken: requestStartedAt.duration(to: prefillEndedAt),
+                generationDuration: prefillStartedAt.duration(to: clock.now),
+                excludedFromDecode: false
+            )
+            await channel.send(
+                .response(
+                    action: .updateUsage(
+                        input: .init(totalTokenCount: promptTokens.count, cachedTokenCount: engine.kvCacheStatistics.reusedPrefixTokens),
+                        output: .init(totalTokenCount: generatedTokenCount, reasoningTokenCount: 0)
+                    )))
 
             // Yield to let the engine's tokenSequence Task finish cleanup
             // (putBackEngine, state reset, etc.) before the next respond().

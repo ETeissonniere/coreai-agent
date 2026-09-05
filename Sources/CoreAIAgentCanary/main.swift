@@ -46,6 +46,7 @@ do {
             toolCallingMode: .required
         )
         : LanguageModelSession(model: model)
+    let throughputBaseline = await model.generationThroughput.snapshot()
     let start = clock.now
     let stream = session.streamResponse(
         to: prompt,
@@ -64,14 +65,13 @@ do {
         output = snapshot.usage.output.totalTokenCount
         if firstTokenAt == nil, !content.isEmpty { firstTokenAt = clock.now }
     }
-    let elapsed = start.duration(to: clock.now)
+    let throughput = await model.generationThroughput.snapshot()
     let ttft = start.duration(to: firstTokenAt ?? clock.now)
     print(content)
-    let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-    let ttftSeconds = Double(ttft.components.seconds) + Double(ttft.components.attoseconds) / 1e18
-    let decodeSeconds = seconds - ttftSeconds
-    let prefillRate = ttftSeconds > 0 ? Double(input) / ttftSeconds : 0
-    let decodeRate = decodeSeconds > 0 ? Double(output) / decodeSeconds : 0
+    let prefillSeconds = throughput.prefillSeconds - throughputBaseline.prefillSeconds
+    let decodeSeconds = throughput.decodeSeconds - throughputBaseline.decodeSeconds
+    let prefillRate = prefillSeconds > 0 ? Double(throughput.prefillTokens - throughputBaseline.prefillTokens) / prefillSeconds : 0
+    let decodeRate = decodeSeconds > 0 ? Double(throughput.decodeTokens - throughputBaseline.decodeTokens) / decodeSeconds : 0
     let report = "load: \(loadTime) · input: \(input) · output: \(output) · TTFT: \(ttft) · prefill: \(prefillRate.formatted(.number.precision(.fractionLength(1)))) tok/s · decode: \(decodeRate.formatted(.number.precision(.fractionLength(1)))) tok/s\n"
     FileHandle.standardError.write(Data(report.utf8))
     if agentToolMode {

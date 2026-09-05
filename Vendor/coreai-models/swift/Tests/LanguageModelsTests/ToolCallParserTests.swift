@@ -29,6 +29,7 @@ struct ToolCallParserTests {
         let call = try #require(singleCall(parser.consume(input) + parser.flush()))
         #expect(call.name == "countCharacters")
         #expect(call.rawText == input)
+        #expect(parser.emittedToolCall)
         #expect(try JSONSerialization.jsonObject(with: Data(call.arguments.utf8)) as? [String: String]
             == ["text": "CoreAI"])
     }

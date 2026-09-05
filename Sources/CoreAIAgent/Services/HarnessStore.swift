@@ -1,7 +1,7 @@
 import Foundation
 
 struct HarnessIndex: Codable, Equatable, Sendable {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     var version: Int = Self.currentVersion
     var workspaces: [AgentWorkspace] = []
@@ -648,7 +648,7 @@ actor JSONHarnessStore: HarnessStoring {
 
     private static var defaultRootURL: URL {
         applicationSupportDirectory()
-            .appending(path: "AgentHarness", directoryHint: .isDirectory)
+            .appending(path: "AgentHarness-v\(HarnessIndex.currentVersion)", directoryHint: .isDirectory)
     }
 
     private static func applicationSupportDirectory() -> URL {
