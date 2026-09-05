@@ -10,11 +10,11 @@
     "profile": "gpu-pipelined",
     "compression": "int8-body-clipped-head-absmax-per-block-32",
     "operationalContextLength": 131072,
-    "compiledAt": "2026-08-31T21:11:30.111699+00:00"
+    "compiledAt": "2026-09-04T23:23:32.025436+00:00"
   },
   "artifact": {
     "path": "Models/Nemotron-3-Nano-4B-CoreAI/gpu-pipelined/nemotron_3_nano_4b_decode_int8hu/nemotron_3_nano_4b_decode_int8hu.aimodel/main.mlirb",
-    "sha256": "564442f10d449125b46a2f39f6ea70ea3f577e31b0aa301cdfd820690d0daff8"
+    "sha256": "bbcc8e5c09baccbe2f44f515e6a23aefdc815cf567ab883a17d259ca3a6fe92b"
   },
   "license": {
     "name": "NVIDIA Nemotron Open Model License",

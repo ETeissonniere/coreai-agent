@@ -12,18 +12,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
-from coreai_models.export.compression import quantize_pytorch_model
 from coreai_models.export import macos as macos_export
+from coreai_models.export.compression import quantize_pytorch_model
 from coreai_models.export.externalize import EXTERNALIZE_SPECS
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from nemotron_h import NemotronHConfig, NemotronHCoreAIDecode, strict_load_checkpoint
 
-
 REVISION = "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f"
 MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
 ASSET_NAME = "nemotron_3_nano_4b_decode_int8hu"
+PREFILL_CHUNK = 16
 PINNED_INPUT_SHA256 = {
     "config.json": "fde9241f66cd414458df444a80eb535f53aef2b4b240a91f092e651fa6f27219",
     "tokenizer.json": "623c34567aebb18582765289fbe23d901c62704d6518d71866e0e58db892b5b7",
@@ -55,12 +55,15 @@ def validate_checkpoint(checkpoint: Path) -> None:
 
 
 def reference_inputs(
-    config: NemotronHConfig, cache_length: int, state_dtype: torch.dtype
+    config: NemotronHConfig,
+    cache_length: int,
+    state_dtype: torch.dtype,
+    query_length: int = 1,
 ) -> dict[str, torch.Tensor]:
     mamba_count = config.layer_types.count("mamba")
     attention_count = config.layer_types.count("attention")
     return {
-        "input_ids": torch.ones(1, 1, dtype=torch.int32),
+        "input_ids": torch.ones(1, query_length, dtype=torch.int32),
         "position_ids": torch.arange(cache_length, dtype=torch.int32).unsqueeze(0),
         "key_cache": torch.zeros(
             attention_count,
@@ -96,39 +99,113 @@ def reference_inputs(
     }
 
 
-def dynamic_shapes(max_context: int) -> dict[str, object]:
+def dynamic_shapes(max_context: int, min_context: int = 1) -> dict[str, object]:
     return {
         "input_ids": None,
-        "position_ids": {1: torch.export.Dim("position_length", min=1, max=max_context)},
-        "key_cache": {3: torch.export.Dim("key_cache_length", min=1, max=max_context)},
-        "value_cache": {3: torch.export.Dim("value_cache_length", min=1, max=max_context)},
+        "position_ids": {
+            1: torch.export.Dim(
+                "position_length", min=min_context, max=max_context
+            )
+        },
+        "key_cache": {
+            3: torch.export.Dim(
+                "key_cache_length", min=min_context, max=max_context
+            )
+        },
+        "value_cache": {
+            3: torch.export.Dim(
+                "value_cache_length", min=min_context, max=max_context
+            )
+        },
         "mamba_convolution": None,
         "mamba_recurrent": None,
+    }
+
+
+def export_spec(
+    config: NemotronHConfig,
+    cache_length: int,
+    state_dtype: torch.dtype,
+    max_context: int,
+    query_length: int,
+) -> dict[str, object]:
+    return {
+        "reference_inputs": reference_inputs(
+            config, cache_length, state_dtype, query_length
+        ),
+        "dynamic_shapes": dynamic_shapes(max_context, query_length),
+        "input_names": ("input_ids", "position_ids"),
+        "output_names": ("logits",),
+        "state_names": (
+            "keyCache",
+            "valueCache",
+            "mambaConvolution",
+            "mambaRecurrent",
+        ),
     }
 
 
 def nemotron_externalization_specs() -> list[object]:
     """Keep only composite operations exercised by Nemotron-H."""
     unused = {"gated_delta_update", "rope", "gather_mm"}
-    return [
-        spec
-        for spec in EXTERNALIZE_SPECS
-        if spec.composite_op_name not in unused
+    return [spec for spec in EXTERNALIZE_SPECS if spec.composite_op_name not in unused]
+
+
+def export_nemotron_multifunction(
+    model: torch.nn.Module,
+    config: NemotronHConfig,
+    cache_length: int,
+    state_dtype: torch.dtype,
+    max_context: int,
+) -> object:
+    specs = nemotron_externalization_specs()
+    entries = [
+        ("main", export_spec(config, cache_length, state_dtype, max_context, 1)),
+        (
+            "prefill",
+            export_spec(
+                config,
+                cache_length,
+                state_dtype,
+                max_context,
+                PREFILL_CHUNK,
+            ),
+        ),
     ]
+    model.eval()
+    converter = macos_export.coreai_torch.TorchConverter(
+        mode=macos_export.coreai_torch.TorchConverter.Mode.RELEASE
+    )
+    for entrypoint_name, spec in entries:
+        def export_fn(
+            module: torch.nn.Module,
+            reference_inputs=spec["reference_inputs"],
+            dynamic_shapes=spec["dynamic_shapes"],
+        ) -> torch.export.ExportedProgram:
+            with torch.no_grad():
+                program = torch.export.export(
+                    module,
+                    args=(),
+                    kwargs=reference_inputs,
+                    dynamic_shapes=dynamic_shapes,
+                )
+            program = program.run_decompositions(
+                macos_export.coreai_torch.get_decomp_table()
+            )
+            macos_export.remove_functionalization(program)
+            return program
 
-
-def export_nemotron_to_coreai(*args: object, **kwargs: object) -> object:
-    """Export with only the composite operations present in Nemotron-H.
-
-    The pinned Apple checkout keeps these specs in a module global rather than
-    accepting them as a public argument, so scope the override to this call.
-    """
-    original = macos_export.EXTERNALIZE_SPECS
-    macos_export.EXTERNALIZE_SPECS = nemotron_externalization_specs()
-    try:
-        return macos_export.export_to_coreai(*args, **kwargs)
-    finally:
-        macos_export.EXTERNALIZE_SPECS = original
+        converter.add_pytorch_module(
+            model,
+            export_fn=export_fn,
+            externalize_modules=specs,
+            input_names=spec["input_names"],
+            output_names=spec["output_names"],
+            state_names=spec["state_names"],
+            entrypoint_name=entrypoint_name,
+        )
+    macos_export.register_custom_torch_lowering(converter)
+    return converter.to_coreai()
 
 
 def int8_quantization_config() -> dict[str, object]:
@@ -192,7 +269,9 @@ def write_bundle_metadata(output: Path, checkpoint: Path, max_context: int) -> N
             "vocab_size": 131072,
             "max_context_length": max_context,
             "embedded_tokenizer": True,
-            "function_map": {"main": ["main"]},
+            "function_map": {"main": ["main"], "prefill": ["prefill"]},
+            "prefill_chunk_length": PREFILL_CHUNK,
+            "prefill_chunk_lengths": [PREFILL_CHUNK],
         },
         "source": {
             "model_definition": "torch",
@@ -203,7 +282,7 @@ def write_bundle_metadata(output: Path, checkpoint: Path, max_context: int) -> N
         "compilation": {
             "date": datetime.now(timezone.utc).isoformat(),
             "targets": ["macOS"],
-            "graph": "single-token decode; prompt prefill is pipelined token-wise",
+            "graph": f"shared-weight S=1 decode and S={PREFILL_CHUNK} prefill",
         },
     }
     (output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
@@ -242,22 +321,16 @@ async def export(args: argparse.Namespace) -> None:
             torch.set_default_dtype(original_dtype)
         print(f"[{time.strftime('%H:%M:%S')}] strict-loading pinned checkpoint")
         strict_load_checkpoint(model, checkpoint)
-        refs = reference_inputs(config, args.trace_cache_length, torch.bfloat16)
-        print(f"[{time.strftime('%H:%M:%S')}] torch.export + Core AI conversion started")
+        print(
+            f"[{time.strftime('%H:%M:%S')}] torch.export + Core AI conversion started"
+        )
         started = time.perf_counter()
-        program = export_nemotron_to_coreai(
+        program = export_nemotron_multifunction(
             model,
-            refs,
-            dynamic_shapes=dynamic_shapes(args.max_context),
-            input_names=("input_ids", "position_ids"),
-            output_names=("logits",),
-            state_names=(
-                "keyCache",
-                "valueCache",
-                "mambaConvolution",
-                "mambaRecurrent",
-            ),
-            include_debug_info=False,
+            config,
+            args.trace_cache_length,
+            torch.bfloat16,
+            args.max_context,
         )
         print(
             f"[{time.strftime('%H:%M:%S')}] BF16 conversion complete in "
@@ -269,7 +342,7 @@ async def export(args: argparse.Namespace) -> None:
             f"[{time.strftime('%H:%M:%S')}] BF16 asset saved in "
             f"{time.perf_counter() - started:.1f}s"
         )
-        del program, model, refs
+        del program, model
         gc.collect()
     # Quantize the PyTorch graph before Core AI export. Post-export blanket INT4
     # compression was both slower and less accurate for this architecture.
@@ -293,14 +366,12 @@ async def export(args: argparse.Namespace) -> None:
         state_indices=(2, 3, 4, 5),
     )
     print(f"[{time.strftime('%H:%M:%S')}] INT8 Core AI conversion started")
-    program = export_nemotron_to_coreai(
+    program = export_nemotron_multifunction(
         quantization_model,
-        quantization_refs,
-        dynamic_shapes=dynamic_shapes(args.max_context),
-        input_names=("input_ids", "position_ids"),
-        output_names=("logits",),
-        state_names=("keyCache", "valueCache", "mambaConvolution", "mambaRecurrent"),
-        include_debug_info=False,
+        config,
+        args.trace_cache_length,
+        torch.float16,
+        args.max_context,
     )
     int8_path = output / f"{ASSET_NAME}.aimodel"
     program.optimize()
@@ -329,9 +400,7 @@ def main() -> None:
     parser.add_argument("--max-context", type=int, default=4096)
     parser.add_argument("--trace-cache-length", type=int, default=256)
     parser.add_argument("--skip-bf16", action="store_true")
-    parser.add_argument(
-        "--mamba-scan-dtype", choices=("fp16", "fp32"), default="fp32"
-    )
+    parser.add_argument("--mamba-scan-dtype", choices=("fp16", "fp32"), default="fp32")
     asyncio.run(export(parser.parse_args()))
 
 

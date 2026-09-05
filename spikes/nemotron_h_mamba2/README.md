@@ -25,6 +25,13 @@ The spike has three implementations of the same layer:
 Run it using the pinned Apple `coreai-models` UV environment:
 
 ```sh
+coreai_utils=.build/apple-coreai-models/.venv/lib/python3.11/site-packages/coreai_torch/_utils.py
+dim_patch=scripts/patches/coreai_torch_externalized_dim_min.patch
+if patch -N -s --dry-run "$coreai_utils" "$dim_patch" >/dev/null 2>&1; then
+  patch -N -s "$coreai_utils" "$dim_patch"
+else
+  patch -R -s --dry-run "$coreai_utils" "$dim_patch" >/dev/null
+fi
 UV_CACHE_DIR=.build/uv-cache uv run --frozen \
   --project .build/apple-coreai-models \
   env PYTHONPATH=spikes/nemotron_h_mamba2 \
@@ -49,15 +56,15 @@ UV_CACHE_DIR=.build/uv-cache uv run --frozen \
   --project .build/apple-coreai-models \
   python spikes/nemotron_h_mamba2/export_full_model.py \
   --checkpoint .build/checkpoints/NVIDIA-Nemotron-3-Nano-4B-BF16 \
-  --output .build/exports/nemotron \
-  --max-context 4096
+  --output .build/exports/nemotron_3_nano_4b_decode_int8hu_pf16 \
+  --max-context 131072 \
+  --skip-bf16
 ```
 
-Use `--skip-bf16` to reproduce only the selective INT8 candidate. The exporter
-uses FP16 recurrent state, Apple's macOS RMSNorm and SDPA composites, two
-fixed-shape recurrent states, and pre-export INT8 weight compression. Linear
-body weights use clipped symmetric block-32 quantization; the untied 131K-vocab
-head uses absmax symmetric block-32 quantization.
+The exporter uses FP16 recurrent state, Apple's macOS RMSNorm and SDPA
+composites, two fixed-shape recurrent states, and pre-export INT8 weight
+compression. Linear body weights use clipped symmetric block-32 quantization;
+the untied 131K-vocab head uses absmax symmetric block-32 quantization.
 
 ## Reference-informed GPU reproduction
 
@@ -69,13 +76,13 @@ in `john-rocky/coreai-model-zoo`. Neither project is a runtime or source
 dependency of this repository; their behavior and graph contracts were used as
 references for this local reimplementation.
 
-The working shape is a static `[1,1]` query on the MPSGraph GPU path. At one
-token, Mamba-2 becomes a loop-free recurrence step. Prompt ingestion therefore
-runs one token at a time with `COREAI_CHUNK_THRESHOLD=1`. The four attention
+The exported asset shares weights between a static `[1,16]` prompt-prefill
+function and the `[1,1]` decode function on the MPSGraph GPU path. The runtime
+automatically uses 16-token chunks and a single-token tail. The four attention
 layers use a growing KV pair, while all 21 Mamba layers share two fixed-shape
 state tensors: convolution `[21,1,9728,3]` and recurrence
-`[21,1,96,80,128]`. The vendored Swift pipelined engine already supports these
-two extra states.
+`[21,1,96,80,128]`. The vendored Swift pipelined engine supports both extra
+states and both entrypoints.
 
 An isolated copy of the published reference artifact was first canaried from
 `.build/reference-models`:
@@ -89,6 +96,11 @@ Both canaries emitted the same 64-token stream for the fixed smoke prompt. The
 local artifact was built from the pinned NVIDIA BF16 checkpoint using only the
 checked-in `nemotron_h` implementation and Apple tooling. Generated artifacts
 remain under `.build` and are neither packaged nor committed.
+
+The multifunction 128K export measured 133.1 prompt tokens/s and 51.5 decode
+tokens/s on a matched warm 133-token/64-token canary. The prior decode-only
+artifact measured 48.8 and 49.8 tokens/s respectively and emitted the same
+64-token stream.
 
 The earlier INT4 result below remains useful negative evidence. Symmetric INT4
 is smaller, but the reference evaluation reports quality loss; the only INT4
