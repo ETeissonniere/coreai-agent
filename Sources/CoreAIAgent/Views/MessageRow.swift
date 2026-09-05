@@ -29,7 +29,8 @@ struct MessageRow: View {
                             metrics: message.metrics
                         )
                     }
-                    if message.text.isEmpty, message.reasoning == nil {
+                    if message.generationState == .streaming,
+                       message.text.isEmpty, message.reasoning == nil {
                         GenerationWaitingView(
                             phase: activePhase ?? .generating,
                             startedAt: message.createdAt
